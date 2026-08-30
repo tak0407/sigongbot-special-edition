@@ -11,6 +11,7 @@ from database.guided_reflection import (
     create_guided_reflection,
     delete_guided_reflection,
     get_guided_reflection,
+    go_to_previous_question,
     save_guided_answer,
 )
 from reflection_questions import select_reflection_questions
@@ -100,6 +101,53 @@ def build_guided_question_view(flow: dict) -> dict:
     questions = flow["questions"]
     question = questions[index]
     is_last = index == len(questions) - 1
+    answer_element = {
+        "type": "plain_text_input",
+        "action_id": "guided_answer_input",
+        "multiline": True,
+        "min_length": 1,
+        "max_length": 1200,
+        "placeholder": {
+            "type": "plain_text",
+            "text": "정답을 찾기보다 지금 떠오르는 생각을 편하게 적어주세요.",
+        },
+    }
+    if index < len(flow["answers"]):
+        answer_element["initial_value"] = flow["answers"][index]
+
+    blocks = [
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"*{index + 1}/{len(questions)} · {question['label']}*",
+                }
+            ],
+        },
+        {
+            "type": "input",
+            "block_id": f"guided_answer_{index}",
+            "label": {"type": "plain_text", "text": question["question"]},
+            "element": answer_element,
+        },
+    ]
+    if index > 0:
+        blocks.append(
+            {
+                "type": "actions",
+                "block_id": f"guided_navigation_{index}",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": "guided_previous_question",
+                        "text": {"type": "plain_text", "text": "← 이전 질문"},
+                        "value": flow["flow_id"],
+                    }
+                ],
+            }
+        )
+
     return {
         "type": "modal",
         "callback_id": "guided_retrospective_submit",
@@ -110,33 +158,7 @@ def build_guided_question_view(flow: dict) -> dict:
         },
         "close": {"type": "plain_text", "text": "나중에"},
         "private_metadata": flow["flow_id"],
-        "blocks": [
-            {
-                "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": f"*{index + 1}/{len(questions)} · {question['label']}*",
-                    }
-                ],
-            },
-            {
-                "type": "input",
-                "block_id": "guided_answer",
-                "label": {"type": "plain_text", "text": question["question"]},
-                "element": {
-                    "type": "plain_text_input",
-                    "action_id": "guided_answer_input",
-                    "multiline": True,
-                    "min_length": 1,
-                    "max_length": 1200,
-                    "placeholder": {
-                        "type": "plain_text",
-                        "text": "정답을 찾기보다 지금 떠오르는 생각을 편하게 적어주세요.",
-                    },
-                },
-            },
-        ],
+        "blocks": blocks,
     }
 
 
@@ -278,9 +300,8 @@ async def handle_guided_submit(
     ack: AsyncAck, body: dict, client: AsyncWebClient, view: dict
 ) -> None:
     flow_id = view["private_metadata"]
-    answer = view["state"]["values"]["guided_answer"]["guided_answer_input"][
-        "value"
-    ].strip()
+    answer_block = next(iter(view["state"]["values"].values()))
+    answer = answer_block["guided_answer_input"]["value"].strip()
     flow = await save_guided_answer(
         flow_id=flow_id,
         user_id=body["user"]["id"],
@@ -317,4 +338,26 @@ async def handle_guided_submit(
             view_id=view_id,
             flow_id=flow_id,
         )
+    )
+
+
+async def handle_guided_previous(
+    ack: AsyncAck, body: dict, client: AsyncWebClient
+) -> None:
+    await ack()
+    values = body["view"].get("state", {}).get("values", {})
+    current_answer = None
+    for block in values.values():
+        if "guided_answer_input" in block:
+            current_answer = (block["guided_answer_input"].get("value") or "").strip()
+            break
+
+    flow = await go_to_previous_question(
+        flow_id=body["actions"][0]["value"],
+        user_id=body["user"]["id"],
+        current_answer=current_answer,
+    )
+    await client.views_update(
+        view_id=body["view"]["id"],
+        view=build_guided_question_view(flow),
     )

@@ -105,6 +105,58 @@ async def save_guided_answer(
     return await asyncio.to_thread(save)
 
 
+async def go_to_previous_question(
+    *, flow_id: str, user_id: str, current_answer: str | None = None
+) -> dict[str, Any]:
+    def move() -> dict[str, Any]:
+        connection = get_connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM guided_reflections
+                 WHERE flow_id = ? AND user_id = ?
+                """,
+                (flow_id, user_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("진행 중인 질문형 회고를 찾지 못했습니다.")
+
+            flow = _decode(row)
+            index = int(flow["current_index"])
+            answers = list(flow["answers"])
+            if current_answer:
+                if index < len(answers):
+                    answers[index] = current_answer
+                else:
+                    answers.append(current_answer)
+            previous_index = max(0, index - 1)
+            connection.execute(
+                """
+                UPDATE guided_reflections
+                   SET answers_json = ?, current_index = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE flow_id = ?
+                """,
+                (
+                    json.dumps(answers, ensure_ascii=False),
+                    previous_index,
+                    flow_id,
+                ),
+            )
+            connection.commit()
+            flow["answers"] = answers
+            flow["current_index"] = previous_index
+            return flow
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    return await asyncio.to_thread(move)
+
+
 async def delete_guided_reflection(flow_id: str) -> None:
     def delete() -> None:
         with get_connection() as connection:

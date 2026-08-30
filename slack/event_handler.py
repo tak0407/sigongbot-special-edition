@@ -37,6 +37,7 @@ from slack.events.test_announcement import (
     handle_post_test_announcement,
     handle_start_from_announcement,
     handle_method_select,
+    handle_guided_previous,
     handle_guided_submit,
 )
 
@@ -133,6 +134,7 @@ app.action("start_retrospective_from_announcement")(
     handle_start_from_announcement
 )
 app.action(re.compile(r"^select_retrospective_method_"))(handle_method_select)
+app.action("guided_previous_question")(handle_guided_previous)
 app.view("guided_retrospective_submit")(handle_guided_submit)
 
 # my retrospectives
