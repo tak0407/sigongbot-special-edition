@@ -45,6 +45,7 @@ def build_retrospective_view(
     session_name: str,
     initial_values: dict | None = None,
     test_mode: bool = False,
+    guided_flow_id: str | None = None,
 ) -> dict:
     initial_values = initial_values or {}
     if test_mode:
@@ -180,7 +181,11 @@ def build_retrospective_view(
         "submit": {"type": "plain_text", "text": "공유하기"},
         "close": {"type": "plain_text", "text": "취소"},
         "private_metadata": json.dumps(
-            {"channel_id": channel_id, "session_name": session_name},
+            {
+                "channel_id": channel_id,
+                "session_name": session_name,
+                "guided_flow_id": guided_flow_id,
+            },
             ensure_ascii=False,
         ),
         "blocks": blocks,

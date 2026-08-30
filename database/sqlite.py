@@ -69,6 +69,7 @@ def initialize_database() -> None:
                 session_name TEXT NOT NULL,
                 questions_json TEXT NOT NULL,
                 answers_json TEXT NOT NULL DEFAULT '[]',
+                formatted_json TEXT,
                 current_index INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -82,6 +83,14 @@ def initialize_database() -> None:
              WHERE status = 'processing';
             """
         )
+        guided_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(guided_reflections)")
+        }
+        if "formatted_json" not in guided_columns:
+            connection.execute(
+                "ALTER TABLE guided_reflections ADD COLUMN formatted_json TEXT"
+            )
 
     os.chmod(database_path.parent, 0o700)
     os.chmod(database_path, 0o600)

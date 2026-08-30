@@ -9,6 +9,7 @@ from slack_sdk.models.blocks import SectionBlock, DividerBlock, ContextBlock
 from config import settings
 from database.retrospective import create_retrospective
 from database.ai_review import enqueue_ai_review
+from database.guided_reflection import delete_guided_reflection
 from utils import save_temp_retrospective, cleanup_temp_files
 
 
@@ -193,6 +194,8 @@ async def handle_view_retrospective_submit(
 
         # 성공적으로 저장되면 임시 파일 삭제
         cleanup_temp_files(user_id)
+        if guided_flow_id := metadata.get("guided_flow_id"):
+            await delete_guided_reflection(guided_flow_id)
 
         # 로깅 추가
         logger.info(f"회고 제출 완료 - User: {user_id}")

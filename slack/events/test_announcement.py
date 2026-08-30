@@ -9,9 +9,9 @@ from ai_review.formatter import format_guided_answers
 from config import settings
 from database.guided_reflection import (
     create_guided_reflection,
-    delete_guided_reflection,
     get_guided_reflection,
     go_to_previous_question,
+    save_guided_format,
     save_guided_answer,
 )
 from reflection_questions import select_reflection_questions
@@ -151,6 +151,7 @@ def build_guided_question_view(flow: dict) -> dict:
     return {
         "type": "modal",
         "callback_id": "guided_retrospective_submit",
+        "external_id": f"guided-reflection-{flow['flow_id']}",
         "title": {"type": "plain_text", "text": "질문으로 회고"},
         "submit": {
             "type": "plain_text",
@@ -262,7 +263,7 @@ def _fallback_format(flow: dict) -> dict[str, str | bool]:
 
 
 async def _finish_guided_formatting(
-    *, client: AsyncWebClient, view_id: str, flow_id: str
+    *, client: AsyncWebClient, flow_id: str
 ) -> None:
     flow = await get_guided_reflection(flow_id)
     if flow is None:
@@ -284,16 +285,39 @@ async def _finish_guided_formatting(
         logger.exception("질문형 회고 AI 정리에 실패해 기본 매핑을 사용합니다.")
         formatted = _fallback_format(flow)
 
-    await client.views_update(
-        view_id=view_id,
-        view=build_retrospective_view(
-            channel_id=flow["slack_channel"],
-            session_name=flow["session_name"],
-            initial_values=formatted,
-            test_mode=True,
-        ),
-    )
-    await delete_guided_reflection(flow_id)
+    try:
+        await save_guided_format(flow_id=flow_id, formatted=formatted)
+        await client.chat_postEphemeral(
+            channel=flow["slack_channel"],
+            user=flow["user_id"],
+            text="AI가 질문형 회고를 정리했어요.",
+            blocks=[
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*AI가 질문형 회고를 정리했어요.*\n내용을 확인하고 수정한 뒤 공유해 주세요.",
+                    },
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "action_id": "open_guided_result",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "정리된 회고 확인",
+                            },
+                            "style": "primary",
+                            "value": flow_id,
+                        }
+                    ],
+                },
+            ],
+        )
+    except Exception:
+        logger.exception(f"질문형 회고 결과 알림 실패 - Flow: {flow_id}")
 
 
 async def handle_guided_submit(
@@ -312,32 +336,9 @@ async def handle_guided_submit(
         await ack(response_action="update", view=build_guided_question_view(flow))
         return
 
-    view_id = view["id"]
-    await ack(
-        response_action="update",
-        view={
-            "type": "modal",
-            "callback_id": "guided_formatting",
-            "title": {"type": "plain_text", "text": "회고 정리 중"},
-            "close": {"type": "plain_text", "text": "닫기"},
-            "private_metadata": flow_id,
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "여섯 답변의 연결과 반복되는 패턴을 Antigravity가 정리하고 있어요. 잠시만 기다려주세요. ⏳",
-                    },
-                }
-            ],
-        },
-    )
+    await ack(response_action="clear")
     asyncio.create_task(
-        _finish_guided_formatting(
-            client=client,
-            view_id=view_id,
-            flow_id=flow_id,
-        )
+        _finish_guided_formatting(client=client, flow_id=flow_id)
     )
 
 
@@ -360,4 +361,30 @@ async def handle_guided_previous(
     await client.views_update(
         view_id=body["view"]["id"],
         view=build_guided_question_view(flow),
+    )
+
+
+async def handle_open_guided_result(
+    ack: AsyncAck, body: dict, client: AsyncWebClient
+) -> None:
+    await ack()
+    flow_id = body["actions"][0]["value"]
+    flow = await get_guided_reflection(flow_id)
+    if flow is None or flow["formatted"] is None:
+        await client.chat_postEphemeral(
+            channel=body["channel"]["id"],
+            user=body["user"]["id"],
+            text="정리된 회고를 찾지 못했어요. 다시 질문형 회고를 시작해 주세요.",
+        )
+        return
+
+    await client.views_open(
+        trigger_id=body["trigger_id"],
+        view=build_retrospective_view(
+            channel_id=flow["slack_channel"],
+            session_name=flow["session_name"],
+            initial_values=flow["formatted"],
+            test_mode=True,
+            guided_flow_id=flow_id,
+        )
     )

@@ -44,6 +44,8 @@ def _decode(row) -> dict[str, Any]:
     result = dict(row)
     result["questions"] = json.loads(result.pop("questions_json"))
     result["answers"] = json.loads(result.pop("answers_json"))
+    formatted_json = result.pop("formatted_json", None)
+    result["formatted"] = json.loads(formatted_json) if formatted_json else None
     return result
 
 
@@ -155,6 +157,29 @@ async def go_to_previous_question(
             connection.close()
 
     return await asyncio.to_thread(move)
+
+
+async def save_guided_format(
+    *, flow_id: str, formatted: dict[str, str | bool]
+) -> dict[str, Any]:
+    def save() -> dict[str, Any]:
+        with get_connection() as connection:
+            connection.execute(
+                """
+                UPDATE guided_reflections
+                   SET formatted_json = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE flow_id = ?
+                """,
+                (json.dumps(formatted, ensure_ascii=False), flow_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM guided_reflections WHERE flow_id = ?", (flow_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("질문형 회고를 찾지 못했습니다.")
+            return _decode(row)
+
+    return await asyncio.to_thread(save)
 
 
 async def delete_guided_reflection(flow_id: str) -> None:
