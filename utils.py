@@ -9,6 +9,7 @@ import csv
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from config import settings
 from constants import DUE_DATES, SESSION_NAMES
 
 
@@ -66,6 +67,9 @@ def get_current_session_info(
         - remaining_time(남은 시간): 마감까지 남은 시간 (timedelta)
         - is_active(활성 여부): 커뮤니티 활성화 여부 (True/False)
     """
+    if settings.SESSION_NAME_OVERRIDE:
+        return -1, settings.SESSION_NAME_OVERRIDE, datetime.timedelta(0), True
+
     if current_time is None:
         current_time = tz_now()
 

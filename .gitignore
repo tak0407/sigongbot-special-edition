@@ -159,6 +159,8 @@ celerybeat.pid
 # Environments
 .env
 .venv
+data/
+temp/
 env/
 venv/
 ENV/
@@ -214,3 +216,4 @@ pyrightconfig.json
 .DS_Store
 logs.csv
 temp/
+runtime/

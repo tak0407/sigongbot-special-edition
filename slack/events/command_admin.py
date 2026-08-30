@@ -47,11 +47,7 @@ async def handle_command_admin(
         retro_id = retro["id"]
         retro_user = retro["user_id"]
         retro_session = retro["session_name"]
-        created_at = (
-            retro["created_at"].split("T")[0]
-            + " "
-            + retro["created_at"].split("T")[1].split(".")[0]
-        )
+        created_at = retro["created_at"].replace("T", " ").split(".")[0]
 
         options_text += f"```회고ID: {retro_id} | {retro_session} | <@{retro_user}> | {created_at}\n```"
 
@@ -68,6 +64,18 @@ async def handle_command_admin(
                     text="채널 초대",
                     action_id="invite_channel",
                     value="invite_channel",
+                ),
+            ],
+        ),
+        DividerBlock(),
+        SectionBlock(text="*테스트 회차 공지를 현재 채널에 보냅니다*"),
+        ActionsBlock(
+            elements=[
+                ButtonElement(
+                    text="테스트 공지 보내기",
+                    action_id="post_test_announcement",
+                    value="post_test_announcement",
+                    style="primary",
                 ),
             ],
         ),

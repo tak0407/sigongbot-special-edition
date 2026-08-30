@@ -24,7 +24,8 @@ async def handle_message(
         and not event.get("subtype")
         and not thread_ts
     ):
+        admin_mentions = " ".join(f"<@{admin_id}>" for admin_id in settings.ADMIN_IDS)
         await client.chat_postMessage(
             channel=settings.ADMIN_CHANNEL,
-            text=f"👋 <@{body['event']['user']}> 님이 <#{settings.SUPPORT_CHANNEL}> 에 문의를 남겼어요. 👀 <@{settings.ADMIN_IDS[0]}> <@{settings.ADMIN_IDS[1]}>",
+            text=f"👋 <@{body['event']['user']}> 님이 <#{settings.SUPPORT_CHANNEL}> 에 문의를 남겼어요. 👀 {admin_mentions}",
         )

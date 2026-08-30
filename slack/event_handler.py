@@ -33,6 +33,12 @@ from slack.events.command_my_retrospectives import handle_command_my_retrospecti
 from slack.events.action_view_retrospective_detail import (
     handle_action_view_retrospective_detail,
 )
+from slack.events.test_announcement import (
+    handle_post_test_announcement,
+    handle_start_from_announcement,
+    handle_method_select,
+    handle_guided_submit,
+)
 
 
 app = SlackBoltAsyncApp()
@@ -45,7 +51,17 @@ async def log_event_middleware(
     next: Callable,
 ) -> None:
     """이벤트 로깅 미들웨어"""
-    logger.info(f"Received event: {req.body}")
+    body = req.body or {}
+    action_ids = [
+        action.get("action_id") for action in body.get("actions", []) if action
+    ]
+    logger.info(
+        "Slack 요청 수신 - type={}, command={}, callback_id={}, actions={}",
+        body.get("type"),
+        body.get("command"),
+        body.get("view", {}).get("callback_id"),
+        action_ids,
+    )
     await next()
 
 
@@ -54,7 +70,13 @@ async def handle_error(error, body):
     """이벤트 핸들러에서 발생한 에러 처리"""
     logger.error(f'"{str(error)}"')
     trace = traceback.format_exc()
-    logger.debug(dict(body=body, error=trace))
+    logger.debug(
+        "Slack 처리 오류 - type={}, command={}, callback_id={}, error={}",
+        body.get("type"),
+        body.get("command"),
+        body.get("view", {}).get("callback_id"),
+        trace,
+    )
 
     # 사용자에게 에러를 알립니다.
     if re.search(r"[\u3131-\uD79D]", str(error)):
@@ -78,12 +100,12 @@ async def handle_error(error, body):
     if isinstance(error, BotException):
         await app.client.chat_postMessage(
             channel=settings.ADMIN_CHANNEL,
-            text=f"🫢: {error=} 🕊️: {trace=} 👉🏼 💌: {body=}",
+            text=f"🫢: {error=} 🕊️: {trace=}",
         )
     else:
         await app.client.chat_postMessage(
             channel=settings.ADMIN_CHANNEL,
-            text=f"⛈️ 핸들링이 필요한 에러입니다. 🫢: {error=} 🕊️: {trace=} 👉🏼 💌: {body=}",
+            text=f"⛈️ 핸들링이 필요한 에러입니다. 🫢: {error=} 🕊️: {trace=}",
         )
 
 
@@ -106,6 +128,12 @@ app.view("invite_channel_view")(handle_action_view_invite_channel)
 # retrospective
 app.command("/공유")(handle_command_retrospective)
 app.view("retrospective_submit")(handle_view_retrospective_submit)
+app.action("post_test_announcement")(handle_post_test_announcement)
+app.action("start_retrospective_from_announcement")(
+    handle_start_from_announcement
+)
+app.action(re.compile(r"^select_retrospective_method_"))(handle_method_select)
+app.view("guided_retrospective_submit")(handle_guided_submit)
 
 # my retrospectives
 app.command("/내회고")(handle_command_my_retrospectives)

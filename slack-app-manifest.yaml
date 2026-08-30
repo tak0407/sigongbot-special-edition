@@ -1,0 +1,45 @@
+_metadata:
+  major_version: 1
+
+display_information:
+  name: 시공봇
+  description: 회고와 시간 기록을 공유하고 함께 돌아보는 Slack 봇
+  background_color: "#2C2D30"
+
+features:
+  bot_user:
+    display_name: 시공봇
+    always_online: false
+  slash_commands:
+    - command: /공유
+      description: 회고와 시간 기록을 공유합니다
+      should_escape: false
+    - command: /내회고
+      description: 내가 작성한 회고를 확인합니다
+      should_escape: false
+    - command: /관리자
+      description: 시공봇 관리자 메뉴를 엽니다
+      should_escape: false
+
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - channels:join
+      - channels:read
+      - channels:write.invites
+      - chat:write
+      - commands
+      - files:read
+
+settings:
+  event_subscriptions:
+    bot_events:
+      - channel_created
+      - message.channels
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
+  is_hosted: false
