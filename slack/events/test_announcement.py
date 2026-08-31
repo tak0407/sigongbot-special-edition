@@ -172,8 +172,12 @@ async def handle_post_test_announcement(
         return
 
     channel_id = body.get("view", {}).get("private_metadata") or settings.ADMIN_CHANNEL
+    submission_channel = settings.TEST_SUBMISSION_CHANNEL or channel_id
     metadata = json.dumps(
-        {"channel_id": channel_id, "session_name": TEST_SESSION_NAME},
+        {
+            "channel_id": submission_channel,
+            "session_name": TEST_SESSION_NAME,
+        },
         ensure_ascii=False,
     )
     await client.chat_postMessage(
@@ -187,7 +191,7 @@ async def handle_post_test_announcement(
                     "text": (
                         "*테스트 회차 회고 제출 안내* 🧪\n"
                         "공지 버튼에서 시작해 회고 작성과 이미지 AI 피드백 흐름을 시험합니다.\n"
-                        "제출 결과는 테스트를 위해 이 채널에 게시됩니다."
+                        f"제출 결과는 테스트를 위해 <#{submission_channel}> 채널에 게시됩니다."
                     ),
                 },
             },

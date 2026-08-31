@@ -27,6 +27,9 @@ class Settings:
         self.SESSION_NAME_OVERRIDE: str = os.getenv(
             "SESSION_NAME_OVERRIDE", ""
         ).strip()
+        self.TEST_SUBMISSION_CHANNEL: str = os.getenv(
+            "TEST_SUBMISSION_CHANNEL", ""
+        ).strip()
 
         self.SLACK_BOT_TOKEN: str = os.getenv("SLACK_BOT_TOKEN", "")
         self.SLACK_APP_TOKEN: str = os.getenv("SLACK_APP_TOKEN", "")
