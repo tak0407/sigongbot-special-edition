@@ -15,6 +15,7 @@
 - 운영 SQLite와 임시 데이터가 담긴 Docker 볼륨을 삭제하지 않는다.
 - `docker compose down -v`는 데이터 볼륨을 삭제하므로 실행하지 않는다.
 - 같은 Slack App 토큰으로 맥북과 미니 PC의 봇을 동시에 실행하지 않는다.
+- Socket Mode 연결에는 `SLACK_BOT_TOKEN`과 `SLACK_APP_TOKEN`을 사용한다. HTTP Request URL을 받지 않으므로 `SLACK_SIGNING_SECRET`은 현재 구성의 필수값이 아니며, 없다는 이유만으로 새 비밀값을 요구하거나 배포를 중단하지 않는다.
 - 기존 사용자 변경사항과 무관한 파일을 되돌리지 않는다.
 - 코드 수정 후 Python 컴파일, Compose 설정, health check, Slack 연결 로그를 검증한다.
 
@@ -34,4 +35,3 @@
 - Slack 공지 버튼, 직접 작성, 질문형 회고, 제출 채널 게시 확인
 - 이미지가 있으면 AI 리뷰 스레드 게시 확인
 - 토큰·`.env`·DB가 Git 추적 대상이 아님을 확인
-
