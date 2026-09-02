@@ -43,7 +43,9 @@ from slack.events.test_announcement import (
 )
 
 
-app = SlackBoltAsyncApp()
+# Slack events are received exclusively through Socket Mode, so HTTP request
+# signature verification (and therefore SLACK_SIGNING_SECRET) is not required.
+app = SlackBoltAsyncApp(request_verification_enabled=False)
 
 
 @app.middleware
