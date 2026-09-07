@@ -71,6 +71,17 @@ async def handle_view_retrospective_submit(
         except json.JSONDecodeError:
             metadata = {"channel_id": metadata_raw, "session_name": "테스트 회차"}
         session_name = metadata.get("session_name") or "테스트 회차"
+        if metadata.get("guided_flow_id") and not any(
+            (values[key][f"{key}_input"].get("value") or "").strip()
+            for key in ("good_points", "improvements", "learnings", "action_item")
+        ):
+            await ack(
+                response_action="errors",
+                errors={
+                    "good_points": "공유할 회고 내용을 한 항목 이상 작성해 주세요."
+                },
+            )
+            return
 
         # 메시지 블록 생성
         blocks = [

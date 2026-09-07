@@ -61,7 +61,7 @@ async def get_guided_reflection(flow_id: str) -> dict[str, Any] | None:
 
 
 async def save_guided_answer(
-    *, flow_id: str, user_id: str, answer: str
+    *, flow_id: str, user_id: str, answer: str | list[str]
 ) -> dict[str, Any]:
     def save() -> dict[str, Any]:
         connection = get_connection()
@@ -79,6 +79,8 @@ async def save_guided_answer(
 
             flow = _decode(row)
             index = int(flow["current_index"])
+            if index >= len(flow["questions"]):
+                raise ValueError("이미 답변을 마친 회고입니다.")
             answers = list(flow["answers"])
             if index < len(answers):
                 answers[index] = answer
@@ -108,7 +110,7 @@ async def save_guided_answer(
 
 
 async def go_to_previous_question(
-    *, flow_id: str, user_id: str, current_answer: str | None = None
+    *, flow_id: str, user_id: str, current_answer: str | list[str] | None = None
 ) -> dict[str, Any]:
     def move() -> dict[str, Any]:
         connection = get_connection()
@@ -127,7 +129,7 @@ async def go_to_previous_question(
             flow = _decode(row)
             index = int(flow["current_index"])
             answers = list(flow["answers"])
-            if current_answer:
+            if current_answer is not None:
                 if index < len(answers):
                     answers[index] = current_answer
                 else:
