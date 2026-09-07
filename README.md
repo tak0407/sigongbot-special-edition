@@ -56,7 +56,18 @@ chmod 600 .env
 ADMIN_IDS=U12345678,U87654321
 ```
 
-테스트 공지 채널과 제출 채널을 분리하려면 `.env`의 `TEST_SUBMISSION_CHANNEL`에 제출 대상 채널 ID를 지정합니다. 비워두면 공지가 게시된 채널로 제출됩니다.
+테스트 공지와 제출 채널을 분리하려면 `.env`의 `TEST_SUBMISSION_CHANNEL`에 단일 테스트 제출 채널 ID를 지정합니다.
+
+공지에는 제출 버튼 하나만 게시합니다. `.env`의 `SUBMISSION_TEAMS`에 팀별 채널 ID와 Slack 멤버 ID 목록을 JSON으로 설정하면 직접 작성·질문형 회고·`/공유` 모두 작성자의 배정된 팀 채널로 제출됩니다. 채널 가입 여부나 버튼을 누른 채널로 팀을 추측하지 않습니다.
+
+```dotenv
+# 아래 ID는 형식 설명용 가상 값입니다. 실제 값은 미니 PC .env에만 입력합니다.
+SUBMISSION_TEAMS='{"C11111111":["U11111111","U22222222"],"C22222222":["U33333333"],"C33333333":["U44444444"]}'
+```
+
+설정이 비어 있거나 미등록 인원이 제출하면 입력창에 안내하고 게시하지 않습니다. 중복 멤버 배정과 잘못된 ID 형식은 시작 시 오류로 처리합니다. `TEST_SUBMISSION_CHANNEL`은 테스트 회차에만 우선 적용되며, 팀 분배를 테스트할 때는 비워둡니다. 본문, SQLite 기록, 이미지 AI 리뷰는 같은 팀 채널을 사용합니다. 질문형 회고의 개인용 결과 확인 알림은 시작한 공지 채널에 표시됩니다.
+
+현재 관리자 공지는 여전히 **테스트 회차**입니다. 실제 운영 전에는 새 기수 일정과 운영 공지 흐름을 별도로 준비해야 합니다. 기존 일정은 2026-08-25에 종료됐으며 `SESSION_NAME_OVERRIDE`는 운영 일정의 대체물이 아닙니다.
 
 토큰과 키는 `.env`에만 저장합니다. `.env`는 Git에서 제외되어 있습니다.
 
@@ -99,3 +110,12 @@ python main.py
 ```
 
 `ENV=dev`에서는 루트의 `.env`를 읽습니다.
+
+팀 제출 라우팅 검증(Slack 게시 없이 가상 19명과 임시 SQLite 사용):
+
+```bash
+ENV=prod python -m unittest discover -s tests -v
+python -m compileall -q config.py slack ai_review database main.py tests
+```
+
+실제 멤버 ID 배정, Slack 게시 권한, Socket Mode 연결, 컨테이너 healthy 여부와 `agy` 실행은 미니 PC에서 별도로 확인해야 합니다.

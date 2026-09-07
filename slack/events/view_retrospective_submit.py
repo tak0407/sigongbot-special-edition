@@ -13,6 +13,18 @@ from database.guided_reflection import delete_guided_reflection
 from utils import save_temp_retrospective, cleanup_temp_files
 
 
+def _get_submission_channel(
+    *, user_id: str, session_name: str
+) -> str:
+    test_mode = session_name == "테스트 회차" or (
+        bool(settings.SESSION_NAME_OVERRIDE)
+        and session_name == settings.SESSION_NAME_OVERRIDE
+    )
+    if test_mode and settings.TEST_SUBMISSION_CHANNEL:
+        return settings.TEST_SUBMISSION_CHANNEL
+    return settings.SUBMISSION_DESTINATIONS.get(user_id, "")
+
+
 async def handle_view_retrospective_submit(
     ack: AsyncAck, body: ViewBodyType, client: AsyncWebClient, view: ViewType
 ):
@@ -80,6 +92,16 @@ async def handle_view_retrospective_submit(
                 errors={
                     "good_points": "공유할 회고 내용을 한 항목 이상 작성해 주세요."
                 },
+            )
+            return
+
+        original_channel_id = _get_submission_channel(
+            user_id=user_id, session_name=session_name
+        )
+        if not original_channel_id:
+            await ack(
+                response_action="errors",
+                errors={"good_points": "팀 배정이 등록되지 않았어요. 관리자에게 문의해주세요. 작성 내용은 이 창에 유지됩니다."},
             )
             return
 
@@ -151,13 +173,10 @@ async def handle_view_retrospective_submit(
 
         blocks.extend(footer_blocks)
 
-        # command_retrospective에서 호출된 채널 ID 가져오기
-        original_channel_id = metadata.get("channel_id") or body["user"]["id"]
-
         await ack()
         acknowledged = True
 
-        # 원래의 채널에 회고 내용 게시
+        # 작성자의 배정된 팀 채널에 회고 내용 게시
         response = await client.chat_postMessage(
             channel=original_channel_id,
             blocks=blocks,

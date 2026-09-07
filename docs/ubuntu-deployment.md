@@ -63,6 +63,7 @@ chmod 600 .env
 - `DATABASE_PATH=data/sigongbot.db`
 - 테스트 중이면 `SESSION_NAME_OVERRIDE=테스트 회차`
 - 테스트 공지와 제출 채널을 분리하면 `TEST_SUBMISSION_CHANNEL`
+- 팀별 제출을 사용하면 `SUBMISSION_TEAMS`에 채널 ID별 멤버 ID 목록을 JSON으로 설정한다(README 예시 참고). 미등록 인원은 제출이 차단된다. 팀 분배 검증 시 `TEST_SUBMISSION_CHANNEL`은 비워둔다.
 
 현재 봇은 Slack Socket Mode 전용이다. `SLACK_SIGNING_SECRET`은 HTTP Events API·Interactivity Request URL의 서명 검증에 쓰는 값이므로 현재 구성에서는 필수 환경변수가 아니다. 이 키가 없다는 이유만으로 배포를 중단하거나 `.env`에 임의 값을 추가하지 않는다.
 
