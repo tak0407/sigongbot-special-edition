@@ -63,6 +63,7 @@ chmod 600 .env
 - `DATABASE_PATH=data/sigongbot.db`
 - 테스트 중이면 `SESSION_NAME_OVERRIDE=테스트 회차`
 - 테스트 공지와 제출 채널을 분리하면 `TEST_SUBMISSION_CHANNEL`
+- 팀별 제출을 사용하면 `SUBMISSION_TEAMS`에 채널 ID별 멤버 ID 목록을 JSON으로 설정한다(README 예시 참고). 미등록 인원은 제출이 차단된다. 팀 분배 검증 시 `TEST_SUBMISSION_CHANNEL`은 비워둔다.
 
 현재 봇은 Slack Socket Mode 전용이다. `SLACK_SIGNING_SECRET`은 HTTP Events API·Interactivity Request URL의 서명 검증에 쓰는 값이므로 현재 구성에서는 필수 환경변수가 아니다. 이 키가 없다는 이유만으로 배포를 중단하거나 `.env`에 임의 값을 추가하지 않는다.
 
@@ -122,10 +123,10 @@ curl --fail http://127.0.0.1:8000/health
 테스트 공지에서 다음 순서로 확인한다.
 
 1. `회고 제출하기` 버튼이 열린다.
-2. 직접 작성 방식으로 제출된다.
-3. 질문형 회고가 한 문항씩 진행되고 이전 질문 이동이 된다.
+2. 라디오 버튼에서 직접 작성 / 질문으로 회고 (베타)를 선택하고 `시작하기`로 진행한다. 직접 작성 방식으로 제출된다.
+3. 질문형 회고는 4개 항목별로 질문 3개가 한 화면에 보인다. 일부 질문만 답하거나 항목 전체를 건너뛸 수 있고, 이전 항목으로 이동해도 답변이 유지된다.
 4. 질문형 AI 정리 완료 알림과 확인 버튼이 도착한다.
-5. 결과가 설정된 제출 채널에 게시된다.
+5. 건너뛴 항목은 확인 화면에서도 선택 입력이고 AI가 내용을 채우지 않는다. 결과가 설정된 제출 채널에 게시된다.
 6. 이미지를 첨부하면 회고 스레드에 AI 리뷰가 게시된다.
 
 실패 시 `docker compose logs --tail=300 sigongbot`으로 확인하되 `.env`나 토큰을 출력하지 않는다.

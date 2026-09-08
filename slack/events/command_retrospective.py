@@ -65,24 +65,28 @@ def build_retrospective_view(
             action_id="good_points_input",
             label="잘했고 좋았던 점을 알려주세요",
             initial_value=initial_values.get("good_points", ""),
+            optional=bool(guided_flow_id),
         ),
         _text_input(
             block_id="improvements",
             action_id="improvements_input",
             label="아쉽고 개선하고 싶은 점을 알려주세요",
             initial_value=initial_values.get("improvements", ""),
+            optional=bool(guided_flow_id),
         ),
         _text_input(
             block_id="learnings",
             action_id="learnings_input",
             label="새롭게 배운 점을 알려주세요",
             initial_value=initial_values.get("learnings", ""),
+            optional=bool(guided_flow_id),
         ),
         _text_input(
             block_id="action_item",
             action_id="action_item_input",
             label="해볼만한 액션 아이템을 알려주세요",
             initial_value=initial_values.get("action_item", ""),
+            optional=bool(guided_flow_id),
         ),
         {
             "type": "input",
