@@ -104,6 +104,20 @@ async def check_user_submitted_this_session(user_id: str, session_name: str) -> 
     return await asyncio.to_thread(select)
 
 
+async def get_submitted_user_ids(session_name: str) -> set[str]:
+    def select() -> set[str]:
+        with get_connection() as connection:
+            return {
+                row["user_id"]
+                for row in connection.execute(
+                    "SELECT DISTINCT user_id FROM retrospectives WHERE session_name = ?",
+                    (session_name,),
+                )
+            }
+
+    return await asyncio.to_thread(select)
+
+
 async def update_retrospective(
     retrospective_id: int, data: dict[str, Any]
 ) -> dict[str, Any]:

@@ -3,6 +3,10 @@ from zoneinfo import ZoneInfo
 
 MAX_PASS_COUNT = 2
 
+SIXTH_FIRST_SESSION_START = datetime.datetime(
+    2026, 9, 11, 19, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")
+)
+
 # 고정된 마감일 목록
 DUE_DATES = [
     datetime.datetime(
@@ -72,6 +76,7 @@ DUE_DATES = [
     datetime.datetime(2026, 8, 11, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 5기 추가1회차
     datetime.datetime(2026, 8, 18, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 5기 추가2회차
     datetime.datetime(2026, 8, 25, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 5기 추가3회차
+    datetime.datetime(2026, 9, 15, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 1회차
 ]
 
 # 각 마감일의 설명
@@ -142,4 +147,5 @@ SESSION_NAMES = [
     "5기 추가1회차",
     "5기 추가2회차",
     "5기 추가3회차",
+    "6기 1회차",
 ]

@@ -4,8 +4,8 @@ from loguru import logger
 from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from config import settings
 from database.sqlite import initialize_database
-from ai_review import run_ai_review_worker
 from slack.event_handler import app as slack_app
+from slack.events.test_announcement import run_sixth_first_announcement_scheduler
 
 async def health_check(request):
     return web.Response(text="OK", status=200)
@@ -28,7 +28,9 @@ async def main():
         app_token=settings.SLACK_APP_TOKEN,
     )
     
-    worker_task = asyncio.create_task(run_ai_review_worker(slack_app.client))
+    announcement_task = asyncio.create_task(
+        run_sixth_first_announcement_scheduler(slack_app.client)
+    ) if settings.ENV == "prod" else None
 
     try:
         # HTTP 서버 시작
@@ -40,8 +42,11 @@ async def main():
         logger.info("Slack Socket Mode started")
         
     finally:
-        worker_task.cancel()
-        await asyncio.gather(worker_task, return_exceptions=True)
+        tasks = []
+        if announcement_task:
+            announcement_task.cancel()
+            tasks.append(announcement_task)
+        await asyncio.gather(*tasks, return_exceptions=True)
         await handler.close_async()
         await runner.cleanup()
         logger.info("서버가 종료되었습니다.")

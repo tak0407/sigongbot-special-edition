@@ -8,7 +8,6 @@ from slack_sdk.models.blocks import SectionBlock, DividerBlock, ContextBlock
 
 from config import settings
 from database.retrospective import create_retrospective
-from database.ai_review import enqueue_ai_review
 from database.guided_reflection import delete_guided_reflection
 from utils import save_temp_retrospective, cleanup_temp_files
 
@@ -58,12 +57,6 @@ async def handle_view_retrospective_submit(
             values.get("emotion_reason", {})
             .get("emotion_reason_input", {})
             .get("value", "")
-        )
-        calendar_type = (
-            values.get("calendar_type", {})
-            .get("calendar_type_input", {})
-            .get("selected_option", {})
-            .get("value", "auto")
         )
         uploaded_files = (
             values.get("calendar_image", {})
@@ -198,29 +191,6 @@ async def handle_view_retrospective_submit(
             emotion_score=int(emotion_score) if emotion_score else None,
             emotion_reason=emotion_reason if emotion_reason else None,
         )
-
-        if calendar_file_id:
-            retrospective_text = "\n".join(
-                [
-                    f"잘한 점: {good_points}",
-                    f"개선할 점: {improvements}",
-                    f"배운 점: {learnings}",
-                    f"다음 액션: {action_item}",
-                ]
-            )
-            await enqueue_ai_review(
-                user_id=user_id,
-                slack_channel=original_channel_id,
-                slack_ts=slack_ts,
-                file_id=calendar_file_id,
-                calendar_type=calendar_type,
-                retrospective_text=retrospective_text,
-            )
-            await client.chat_postMessage(
-                channel=original_channel_id,
-                thread_ts=slack_ts,
-                text="이미지를 확인했어요. AI 시간 리뷰를 준비하고 있습니다. 잠시만 기다려주세요. ⏳",
-            )
 
         # 성공적으로 저장되면 임시 파일 삭제
         cleanup_temp_files(user_id)

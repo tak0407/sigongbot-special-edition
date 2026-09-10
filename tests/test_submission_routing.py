@@ -74,14 +74,12 @@ class SubmissionRoutingTest(unittest.IsolatedAsyncioTestCase):
                     ack = await self.submit(user, guided=guided)
                     ack.assert_awaited_once_with()
                     calls = self.client.chat_postMessage.await_args_list
-                    self.assertEqual([call.kwargs["channel"] for call in calls], [channel, channel])
-                    self.assertEqual(calls[1].kwargs["thread_ts"], "123.456")
+                    self.assertEqual([call.kwargs["channel"] for call in calls], [channel])
                     with closing(get_connection()) as connection:
-                        for table in ("retrospectives", "ai_review_jobs"):
-                            row = connection.execute(f"SELECT * FROM {table} ORDER BY id DESC LIMIT 1").fetchone()
-                            self.assertEqual(row["user_id"], user)
-                            self.assertEqual(row["slack_channel"], channel)
-                            self.assertEqual(row["slack_ts"], "123.456")
+                        row = connection.execute("SELECT * FROM retrospectives ORDER BY id DESC LIMIT 1").fetchone()
+                        self.assertEqual(row["user_id"], user)
+                        self.assertEqual(row["slack_channel"], channel)
+                        self.assertEqual(row["slack_ts"], "123.456")
 
     async def test_unknown_member_keeps_modal_and_posts_nothing(self):
         ack = await self.submit("U99999999")
