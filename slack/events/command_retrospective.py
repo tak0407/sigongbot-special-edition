@@ -110,41 +110,6 @@ def build_retrospective_view(
         ),
         {
             "type": "input",
-            "block_id": "calendar_type",
-            "optional": True,
-            "label": {"type": "plain_text", "text": "시간 기록 이미지 유형"},
-            "element": {
-                "type": "static_select",
-                "action_id": "calendar_type_input",
-                "initial_option": {
-                    "text": {"type": "plain_text", "text": "자동 판별"},
-                    "value": "auto",
-                },
-                "options": [
-                    {
-                        "text": {"type": "plain_text", "text": "자동 판별"},
-                        "value": "auto",
-                    },
-                    {
-                        "text": {
-                            "type": "plain_text",
-                            "text": "수기 다이어리·캘린더",
-                        },
-                        "value": "handwritten_calendar",
-                    },
-                    {
-                        "text": {"type": "plain_text", "text": "수기 계획표"},
-                        "value": "handwritten_plan",
-                    },
-                    {
-                        "text": {"type": "plain_text", "text": "디지털 캘린더"},
-                        "value": "digital_calendar",
-                    },
-                ],
-            },
-        },
-        {
-            "type": "input",
             "block_id": "calendar_image",
             "optional": True,
             "label": {
@@ -153,7 +118,7 @@ def build_retrospective_view(
             },
             "hint": {
                 "type": "plain_text",
-                "text": "이미지를 첨부하면 게시 후 AI 피드백이 스레드에 달립니다.",
+                "text": "이미지는 회고와 함께 게시됩니다.",
             },
             "element": {
                 "type": "file_input",
@@ -201,8 +166,17 @@ async def handle_command_retrospective(
 ):
     await ack()
     user_id = body["user_id"]
-    session_name = get_current_session_info()[1]
+    session_info = get_current_session_info()
+    session_name = session_info[1]
     test_mode = bool(settings.SESSION_NAME_OVERRIDE)
+
+    if not session_info[3]:
+        await client.chat_postEphemeral(
+            channel=body["channel_id"],
+            user=user_id,
+            text="현재는 회고 제출 기간이 아니에요.",
+        )
+        return
 
     if not test_mode and await check_user_submitted_this_session(
         user_id=user_id, session_name=session_name

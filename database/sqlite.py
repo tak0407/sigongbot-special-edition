@@ -78,6 +78,11 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS guided_reflections_user_idx
                 ON guided_reflections(user_id, created_at);
 
+            CREATE TABLE IF NOT EXISTS scheduled_announcements (
+                announcement_key TEXT PRIMARY KEY,
+                sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             UPDATE ai_review_jobs
                SET status = 'pending', updated_at = CURRENT_TIMESTAMP
              WHERE status = 'processing';
