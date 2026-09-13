@@ -350,11 +350,17 @@ class AdminAuthenticationTest(AdminWebTestCase):
 
     async def test_login_returns_to_root_paths_only(self):
         # 외부 주소나 예전 /admin 경로가 next로 들어와도 루트 기준으로만 되돌린다.
-        self.assertEqual(auth._safe_next("//evil.example.com"), "/")
-        self.assertEqual(auth._safe_next("https://evil.example.com"), "/")
-        self.assertEqual(auth._safe_next("/admin"), "/")
-        self.assertEqual(auth._safe_next("/admin/schedule"), "/schedule")
-        self.assertEqual(auth._safe_next("/ai-jobs?status=failed"), "/ai-jobs?status=failed")
+        self.assertEqual(auth.safe_internal_path("//evil.example.com"), "/")
+        self.assertEqual(auth.safe_internal_path("https://evil.example.com"), "/")
+        self.assertEqual(auth.safe_internal_path("/admin"), "/")
+        self.assertEqual(auth.safe_internal_path("/admin/schedule"), "/schedule")
+        self.assertEqual(auth.safe_internal_path("/ai-jobs?status=failed"), "/ai-jobs?status=failed")
+
+    async def test_legacy_redirect_cannot_leave_the_site(self):
+        response = await self.client.get(
+            "/admin//evil.example.com", headers=self._auth_headers(), allow_redirects=False
+        )
+        self.assertEqual(response.headers["Location"], "/")
 
     async def test_protected_page_redirects_to_root_login_with_next(self):
         response = await self.client.get("/schedule", allow_redirects=False)

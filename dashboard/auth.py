@@ -259,8 +259,8 @@ def _delete_session(token: str) -> None:
         connection.execute("DELETE FROM admin_sessions WHERE token_hash = ?", (_token_hash(token),))
 
 
-def _safe_next(value: str) -> str:
-    """로그인 후 돌아갈 경로를 같은 사이트의 루트 기준 경로로만 허용한다."""
+def safe_internal_path(value: str) -> str:
+    """같은 사이트의 루트 기준 경로만 허용하고, 예전 /admin 접두사는 벗긴다."""
     if not value.startswith("/") or value.startswith("//") or "\\" in value:
         return "/"
     # 예전 /admin 북마크가 next로 들어와도 루트 기준으로 되돌린다.
@@ -296,14 +296,14 @@ button{{width:100%;margin-top:22px;padding:10px;border:0;border-radius:8px;backg
 
 async def handle_login_form(request: web.Request) -> web.Response:
     if await asyncio.to_thread(_load_session, request.cookies.get(SESSION_COOKIE, "")):
-        raise web.HTTPFound(_safe_next(request.query.get("next", "/")))
+        raise web.HTTPFound(safe_internal_path(request.query.get("next", "/")))
     nonce = secrets.token_urlsafe(24)
     try:
         csrf = _csrf_token("login:" + nonce)
     except RuntimeError as error:
         raise web.HTTPServiceUnavailable(text=str(error))
     response = web.Response(
-        text=_login_page(csrf=csrf, next_path=_safe_next(request.query.get("next", "/"))),
+        text=_login_page(csrf=csrf, next_path=safe_internal_path(request.query.get("next", "/"))),
         content_type="text/html",
     )
     _set_secure_cookie(response, LOGIN_CSRF_COOKIE, nonce, max_age=600)
@@ -324,7 +324,7 @@ async def handle_login(request: web.Request) -> web.Response:
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
     status, admin_user_id = await asyncio.to_thread(_authenticate_login, username, password)
-    next_path = _safe_next(str(form.get("next", "/")))
+    next_path = safe_internal_path(str(form.get("next", "/")))
     if status != "ok" or admin_user_id is None:
         error = (f"로그인 시도가 잠겼습니다. {LOCK_MINUTES}분 후 다시 시도하세요."
                  if status == "locked" else "계정명 또는 비밀번호가 올바르지 않습니다.")

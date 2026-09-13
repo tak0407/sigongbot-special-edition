@@ -2,14 +2,14 @@
 
 from aiohttp import web
 
-from dashboard.auth import LEGACY_PREFIX
+from dashboard.auth import LEGACY_PREFIX, safe_internal_path
 from dashboard.directory import SLACK_CLIENT
 
 
 async def _redirect_legacy_admin(request: web.Request) -> web.StreamResponse:
     """예전 /admin 북마크를 루트 기준 경로로 넘겨준다."""
-    tail = request.match_info.get("tail", "")
-    target = "/" + tail
+    # //evil.example.com 같은 프로토콜 상대 주소로 새어 나가지 않게 한 번 걸러 낸다.
+    target = safe_internal_path("/" + request.match_info.get("tail", ""))
     if request.query_string:
         target = f"{target}?{request.query_string}"
     raise web.HTTPFound(target)
