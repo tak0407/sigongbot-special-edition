@@ -10,7 +10,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from config import settings
-from constants import DUE_DATES, SESSION_NAMES, SIXTH_FIRST_SESSION_START
+from constants import (
+    DUE_DATES,
+    SESSION_NAMES,
+    SIXTH_FIRST_PREVIOUS_DUE,
+    SIXTH_FIRST_SESSION_START,
+)
 
 
 def tz_now(tz: str = "Asia/Seoul") -> datetime.datetime:
@@ -73,7 +78,7 @@ def get_current_session_info(
     if current_time is None:
         current_time = tz_now()
 
-    if DUE_DATES[-2] <= current_time < SIXTH_FIRST_SESSION_START:
+    if SIXTH_FIRST_PREVIOUS_DUE <= current_time < SIXTH_FIRST_SESSION_START:
         return -1, "", datetime.timedelta(0), False
 
     # 모든 마감이 완료된 경우

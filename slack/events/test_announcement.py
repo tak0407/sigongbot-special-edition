@@ -18,14 +18,16 @@ from database.retrospective import get_submitted_user_ids
 from database.scheduled_announcements import announcement_sent, mark_announcement_sent
 from reflection_questions import select_reflection_questions
 from slack.events.command_retrospective import build_retrospective_view
-from constants import DUE_DATES, SIXTH_FIRST_SESSION_START
+from constants import (
+    SIXTH_FIRST_SESSION_DUE,
+    SIXTH_FIRST_SESSION_NAME,
+    SIXTH_FIRST_SESSION_START,
+)
 from utils import tz_now
 
 
 TEST_SESSION_NAME = "테스트 회차"
-SIXTH_FIRST_SESSION_NAME = "6기 1회차"
 SIXTH_FIRST_REMINDER_AT = SIXTH_FIRST_SESSION_START.replace(day=13, hour=21)
-SIXTH_FIRST_SESSION_DUE = DUE_DATES[-1]
 
 RETROSPECTIVE_METHODS = [
     {
