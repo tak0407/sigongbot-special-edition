@@ -31,6 +31,8 @@ oauth_config:
       - chat:write
       - commands
       - files:read
+      # 관리자 대시보드에서 사용자 ID를 표시 이름으로 바꾸는 데 사용한다.
+      - users:read
 
 settings:
   event_subscriptions:
