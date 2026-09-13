@@ -217,3 +217,13 @@ pyrightconfig.json
 logs.csv
 temp/
 runtime/
+
+# 운영 SQLite와 백업 (절대 커밋하지 않는다)
+data/
+backups/
+*.db
+*.db-wal
+*.db-shm
+*.db.gz
+*.sqlite
+*.sqlite3

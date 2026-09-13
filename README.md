@@ -120,6 +120,15 @@ docker compose down
 
 컨테이너는 `restart: unless-stopped` 정책으로 Ubuntu 재부팅 뒤 자동 복구됩니다. 로그는 파일당 10MB, 최대 3개로 순환합니다. SQLite 데이터와 제출 실패 시 생기는 회고 임시 데이터는 Docker 볼륨에 보존됩니다.
 
+DB 백업은 다음 명령으로 만들고, 만들자마자 무결성과 행 수를 검증합니다.
+
+```bash
+scripts/backup_database.sh
+scripts/restore_database.sh ~/sigongbot-backups/<백업파일>.db.gz
+```
+
+자동 백업 등록, 검증, 복원 훈련 절차는 [docs/backup-and-restore.md](docs/backup-and-restore.md)에 있습니다. 스키마 변경은 `database/migrations.py`의 마이그레이션으로만 적용되며 적용 이력은 DB의 `schema_migrations` 테이블에 남습니다.
+
 ## 로컬 개발
 
 ```bash

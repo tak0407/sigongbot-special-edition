@@ -16,12 +16,15 @@
 - `docker compose down -v`는 데이터 볼륨을 삭제하므로 실행하지 않는다.
 - 같은 Slack App 토큰으로 맥북과 미니 PC의 봇을 동시에 실행하지 않는다.
 - Socket Mode 연결에는 `SLACK_BOT_TOKEN`과 `SLACK_APP_TOKEN`을 사용한다. HTTP Request URL을 받지 않으므로 `SLACK_SIGNING_SECRET`은 현재 구성의 필수값이 아니며, 없다는 이유만으로 새 비밀값을 요구하거나 배포를 중단하지 않는다.
+- 스키마 변경은 `database/migrations.py`에 새 버전을 추가해 적용한다. 이미 배포된 마이그레이션은 수정하지 않고, 기동 시 `CREATE TABLE`이나 `ALTER TABLE`을 직접 덧붙이지 않는다.
+- 스키마 변경이나 데이터 정리를 배포하기 전에 `scripts/backup_database.sh`로 백업하고 검증 결과를 확인한다. 절차는 `docs/backup-and-restore.md`를 따른다.
+- 회고는 Slack 게시 전에 DB에 먼저 기록한다. Slack 게시 성공 여부와 DB 기록 순서를 바꾸지 않는다.
 - 기존 사용자 변경사항과 무관한 파일을 되돌리지 않는다.
 - 코드 수정 후 Python 컴파일, Compose 설정, health check, Slack 연결 로그를 검증한다.
 
 ## 현재 주의사항
 
-- 회고 데이터는 Supabase가 아니라 로컬 SQLite를 사용한다.
+- 회고 데이터는 Supabase가 아니라 로컬 SQLite를 사용한다. 운영 회차에는 `(user_id, session_name)` UNIQUE 제약이 걸려 있고, 테스트 회차(`is_test_submission = 1`)는 제외된다.
 - 질문형 회고 정리는 Antigravity CLI(`agy`)를 호출한다. 시간 기록 이미지는 분석하지 않고 회고와 함께 게시한다.
 - 현재 Docker 이미지에는 `agy`가 포함되어 있지 않다. 질문형 회고 AI 정리까지 운영 완료로 판단하려면 컨테이너와 동일한 실행 환경에서 `agy` 설치·인증을 검증해야 한다.
 - `constants.py`에는 6기 1회차(2026-09-11 19:00 시작, 2026-09-15 05:00 마감)까지만 설정돼 있다. `.env`의 `SESSION_NAME_OVERRIDE`는 테스트 전용이며 실제 운영 일정의 대체물이 아니다.

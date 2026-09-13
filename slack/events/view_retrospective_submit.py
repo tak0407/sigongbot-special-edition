@@ -7,18 +7,27 @@ from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.models.blocks import SectionBlock, DividerBlock, ContextBlock
 
 from config import settings
-from database.retrospective import create_retrospective
+from database.retrospective import (
+    discard_pending_retrospective,
+    mark_retrospective_posted,
+    start_retrospective_submission,
+)
 from database.guided_reflection import delete_guided_reflection
+from exception import RetrospectiveAlreadySubmitted
 from utils import save_temp_retrospective, cleanup_temp_files
+
+
+def _is_test_session(session_name: str) -> bool:
+    return session_name == "테스트 회차" or (
+        bool(settings.SESSION_NAME_OVERRIDE)
+        and session_name == settings.SESSION_NAME_OVERRIDE
+    )
 
 
 def _get_submission_channel(
     *, user_id: str, session_name: str, requested_channel: str = ""
 ) -> str:
-    test_mode = session_name == "테스트 회차" or (
-        bool(settings.SESSION_NAME_OVERRIDE)
-        and session_name == settings.SESSION_NAME_OVERRIDE
-    )
+    test_mode = _is_test_session(session_name)
     if test_mode and settings.TEST_SUBMISSION_CHANNEL:
         return settings.TEST_SUBMISSION_CHANNEL
     if (
@@ -173,31 +182,54 @@ async def handle_view_retrospective_submit(
 
         blocks.extend(footer_blocks)
 
+        # Slack 게시보다 먼저 로컬 SQLite에 기록한다.
+        # 저장이 실패하면 Slack에도 게시되지 않으므로 중복 게시가 생기지 않는다.
+        try:
+            record = await start_retrospective_submission(
+                user_id=user_id,
+                session_name=session_name,
+                slack_channel=original_channel_id,
+                good_points=good_points,
+                improvements=improvements,
+                learnings=learnings,
+                action_item=action_item,
+                emotion_score=int(emotion_score) if emotion_score else None,
+                emotion_reason=emotion_reason if emotion_reason else None,
+                is_test=_is_test_session(session_name),
+            )
+        except RetrospectiveAlreadySubmitted:
+            logger.warning(f"중복 회고 제출 차단 - User: {user_id}, Session: {session_name}")
+            await ack(
+                response_action="errors",
+                errors={
+                    "good_points": "이번 회차 회고는 이미 제출됐어요. 수정이 필요하면 관리자에게 문의해주세요."
+                },
+            )
+            return
+
         await ack()
         acknowledged = True
 
         # 작성자의 배정된 팀 채널에 회고 내용 게시
-        response = await client.chat_postMessage(
-            channel=original_channel_id,
-            blocks=blocks,
-            text=f"*<@{user_id}>님이 `{session_name}` 회고를 공유했어요! 🤗*",
-        )
+        try:
+            response = await client.chat_postMessage(
+                channel=original_channel_id,
+                blocks=blocks,
+                text=f"*<@{user_id}>님이 `{session_name}` 회고를 공유했어요! 🤗*",
+            )
+        except Exception:
+            # 게시되지 않은 회고는 되돌려 재제출을 막지 않는다.
+            await discard_pending_retrospective(record["id"])
+            raise
 
-        # 메시지 타임스탬프 가져오기
-        slack_ts = response["ts"]
-        # 로컬 SQLite에 데이터 저장
-        await create_retrospective(
-            user_id=user_id,
-            session_name=session_name,
-            slack_channel=original_channel_id,
-            slack_ts=slack_ts,
-            good_points=good_points,
-            improvements=improvements,
-            learnings=learnings,
-            action_item=action_item,
-            emotion_score=int(emotion_score) if emotion_score else None,
-            emotion_reason=emotion_reason if emotion_reason else None,
-        )
+        # 게시 성공을 기록한다. 이 단계가 실패해도 Slack에는 이미 게시됐으므로
+        # 회고를 삭제하거나 다시 게시하지 않고 pending 상태로 남겨 둔다.
+        try:
+            await mark_retrospective_posted(record["id"], response["ts"])
+        except Exception as error:
+            logger.error(
+                f"게시 상태 기록 실패 - ID: {record['id']}, User: {user_id}, Error: {str(error)}"
+            )
 
         # 성공적으로 저장되면 임시 파일 삭제
         cleanup_temp_files(user_id)

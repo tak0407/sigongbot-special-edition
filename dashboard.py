@@ -35,6 +35,9 @@ def _dashboard_data() -> dict:
                 (session_name,),
             )
         }
+        pending_posts = connection.execute(
+            "SELECT COUNT(*) FROM retrospectives WHERE slack_post_status = 'pending'"
+        ).fetchone()[0]
         failed_ai = connection.execute(
             "SELECT COUNT(*) FROM ai_review_jobs WHERE status = 'failed'"
         ).fetchone()[0]
@@ -56,6 +59,7 @@ def _dashboard_data() -> dict:
         "submitted": len(submitted),
         "expected": len(expected),
         "missing": max(0, len(expected - submitted)),
+        "pending_posts": pending_posts,
         "pending_ai": pending_ai,
         "failed_ai": failed_ai,
         "recent": [dict(row) for row in recent],
@@ -80,7 +84,8 @@ def _page(data: dict) -> str:
 <section class="cards"><div class="card">현재 회차<div class="number">{escape(data['session_name'])}</div><small>{data['status']} · 마감까지 {data['remaining']}</small></div>
 <div class="card">제출 현황<div class="number">{data['submitted']} / {data['expected']}</div><small>미제출 {data['missing']}명</small></div>
 <div class="card">AI 처리 대기<div class="number">{data['pending_ai']}건</div><small>질문형 회고 이미지 처리</small></div>
-<div class="card">처리 오류<div class="number">{data['failed_ai']}건</div><small>Slack 로그에서 원인을 확인하세요.</small></div></section>
+<div class="card">처리 오류<div class="number">{data['failed_ai']}건</div><small>Slack 로그에서 원인을 확인하세요.</small></div>
+<div class="card">게시 기록 미확인<div class="number">{data['pending_posts']}건</div><small>Slack 게시 후 상태 기록이 끝나지 않은 회고</small></div></section>
 <h2>최근 제출</h2><table><thead><tr><th>사용자</th><th>회차</th><th>제출 시각 (UTC)</th><th>게시 채널</th></tr></thead><tbody>{recent_rows}</tbody></table>
 </body></html>"""
 

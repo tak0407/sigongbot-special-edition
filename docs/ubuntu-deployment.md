@@ -152,18 +152,33 @@ docker compose logs --tail=100 sigongbot
 
 ## 9. 업데이트와 백업
 
-업데이트 전 SQLite 볼륨을 백업하고 운영 중인 컨테이너를 확인한다. 데이터가 있는 상태에서 `docker compose down -v`를 실행하지 않는다.
+업데이트 전 SQLite를 백업하고 운영 중인 컨테이너를 확인한다. 데이터가 있는 상태에서 `docker compose down -v`를 실행하지 않는다.
 
 코드 업데이트 기본 순서:
 
 ```bash
+scripts/backup_database.sh
 git pull --ff-only
 docker compose up -d --build
 docker compose ps
 curl --fail http://127.0.0.1:8000/health
+docker compose exec -T sigongbot python scripts/backup_database.py verify
 ```
 
-백업·복원 명령은 실제 Compose 볼륨 이름을 조회한 뒤 별도 문서로 확정한다. 추정한 볼륨 이름으로 삭제·복원하지 않는다.
+운영 DB는 Docker 볼륨 `sigongbot-special-edition_database-data`의 `/app/data/sigongbot.db` 하나다. 백업은 `scripts/backup_database.sh`, 복원은 `scripts/restore_database.sh`를 사용하고, 자동 백업 등록·검증·복원 훈련 절차는 `docs/backup-and-restore.md`를 따른다. 볼륨 이름을 추정해 직접 삭제하거나 파일을 `cp`로 복사해 복원하지 않는다.
+
+최초 배포 시에는 다음도 함께 확인한다.
+
+```bash
+crontab -l | grep backup_database   # 자동 백업 등록 여부
+ls -l ~/sigongbot-backups           # 최신 백업 존재 여부
+```
+
+스키마 변경이 포함된 배포는 기동 로그에서 마이그레이션 적용을 확인한다.
+
+```bash
+docker compose logs --tail=100 sigongbot | grep 마이그레이션
+```
 
 ## 10. 완료 보고
 
