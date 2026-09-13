@@ -83,6 +83,16 @@ def initialize_database() -> None:
                 sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- 회고 작성자 명단. retrospectives.user_id에 외래키를 걸지 않는다.
+            -- 명단에 없는 작성자가 있고, 명단에도 사람이 아닌 앱 계정이 섞여 있다.
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                real_name TEXT NOT NULL,
+                email TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             UPDATE ai_review_jobs
                SET status = 'pending', updated_at = CURRENT_TIMESTAMP
              WHERE status = 'processing';
