@@ -60,7 +60,8 @@ chmod 600 .env
 - `ADMIN_CHANNEL`
 - `SUPPORT_CHANNEL`
 - `ADMIN_IDS`
-- 관리자 웹을 사용하면 `DASHBOARD_PASSWORD` (긴 임의 문자열)
+- `DASHBOARD_SESSION_SECRET` (32자 이상의 암호학적 임의 문자열)
+- `CLOUDFLARE_TUNNEL_TOKEN` (Cloudflare Zero Trust에서 발급한 터널 토큰)
 - `DATABASE_PATH=data/sigongbot.db`
 - 테스트 중이면 `SESSION_NAME_OVERRIDE=테스트 회차`
 - 테스트 공지와 제출 채널을 분리하면 `TEST_SUBMISSION_CHANNEL`
@@ -123,7 +124,11 @@ curl --fail http://127.0.0.1:8000/health
 
 로그나 상태 출력에 토큰이 포함되지 않았는지 확인한다.
 
-관리자 웹은 미니 PC에서만 `http://127.0.0.1:8000/admin`으로 연다. `DASHBOARD_PASSWORD`가 비어 있으면 인증 없이 열리고, 설정하면 사용자 이름 `admin`과 해당 비밀번호로 보호된다. Compose의 `127.0.0.1` 바인딩을 유지하고 공개 포트나 도메인은 열지 말며, 원격 접근은 SSH 터널 또는 VPN을 사용한다.
+관리자 웹은 로컬에서도 `http://127.0.0.1:8000/admin`으로 점검하며 DB
+관리자 로그인이 항상 필요하다. `cloudflared`는 같은 Compose 네트워크의
+`http://sigongbot:8000`으로만 연결한다. 공유기 포트 포워딩과 공인 인바운드
+포트는 열지 않는다. 외부 검증은 `docs/cloudflare-dashboard.md`의 Access 차단,
+허용 계정 로그인, 로그아웃 순서로 수행한다.
 
 ## 7. Slack 기능 검증
 

@@ -5,6 +5,7 @@ from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from config import settings
 from ai_review.antigravity import validate_antigravity_runtime
 from dashboard import register_dashboard_routes
+from dashboard.auth import validate_dashboard_security
 from database.sqlite import initialize_database
 from slack.event_handler import app as slack_app
 from slack.events.test_announcement import run_sixth_first_announcement_scheduler
@@ -14,6 +15,7 @@ async def health_check(request):
 
 
 async def main():
+    validate_dashboard_security()
     initialize_database()
 
     try:

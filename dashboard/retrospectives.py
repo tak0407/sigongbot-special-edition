@@ -146,6 +146,7 @@ async def handle_list(request: web.Request) -> web.Response:
             heading="회고 열람",
             subtitle="제출 시각을 누르면 Slack 메시지로, 열기를 누르면 본문 전체로 이동합니다.",
             body=body,
+            request=request,
         ),
         content_type="text/html",
     )
@@ -195,6 +196,7 @@ async def handle_detail(request: web.Request) -> web.Response:
             heading=f"회고 #{row['id']}",
             subtitle=escape(row["session_name"]),
             body=body,
+            request=request,
         ),
         content_type="text/html",
     )

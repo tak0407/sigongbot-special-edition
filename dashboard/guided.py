@@ -115,6 +115,7 @@ async def handle(request: web.Request) -> web.Response:
             heading="진행 중 회고",
             subtitle="질문형 회고를 시작했지만 아직 끝내지 않은 사람들입니다.",
             body=body,
+            request=request,
         ),
         content_type="text/html",
     )

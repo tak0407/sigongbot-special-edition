@@ -71,7 +71,14 @@ class Settings:
         self.SUPPORT_CHANNEL: str = os.getenv("SUPPORT_CHANNEL", "")
 
         self.ADMIN_IDS: list[str] = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
+        # 이전 배포 감지와 이관 안내용. HTTP Basic 인증에는 사용하지 않는다.
         self.DASHBOARD_PASSWORD: str = os.getenv("DASHBOARD_PASSWORD", "")
+        self.DASHBOARD_SESSION_SECRET: str = os.getenv(
+            "DASHBOARD_SESSION_SECRET", ""
+        ).strip()
+        self.DASHBOARD_SESSION_HOURS: int = int(
+            os.getenv("DASHBOARD_SESSION_HOURS", "12")
+        )
 
         self.DATABASE_PATH: str = os.getenv(
             "DATABASE_PATH", "data/sigongbot.db"

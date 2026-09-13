@@ -131,6 +131,7 @@ async def handle(request: web.Request) -> web.Response:
             heading="회차 일정",
             subtitle="마감일과 남은 회차를 확인합니다.",
             body=body,
+            request=request,
         ),
         content_type="text/html",
     )

@@ -17,17 +17,18 @@ def get_connection() -> sqlite3.Connection:
     return connection
 
 
-def initialize_database() -> None:
+def initialize_database(*, recover_processing_jobs: bool = True) -> None:
     database_path = Path(settings.DATABASE_PATH).expanduser()
     with get_connection() as connection:
         run_migrations(connection)
-        connection.execute(
-            """
-            UPDATE ai_review_jobs
-               SET status = 'pending', updated_at = CURRENT_TIMESTAMP
-             WHERE status = 'processing'
-            """
-        )
+        if recover_processing_jobs:
+            connection.execute(
+                """
+                UPDATE ai_review_jobs
+                   SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+                 WHERE status = 'processing'
+                """
+            )
 
     os.chmod(database_path.parent, 0o700)
     os.chmod(database_path, 0o600)

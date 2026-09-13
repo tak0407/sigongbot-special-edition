@@ -56,10 +56,11 @@ chmod 600 .env
 ADMIN_IDS=U12345678,U87654321
 ```
 
-관리자 현황 화면은 `http://127.0.0.1:8000/admin`입니다. 미니 PC의 `.env`에
-`DASHBOARD_PASSWORD`를 설정하면 사용자 이름 `admin`과 해당 비밀번호의 HTTP Basic 인증으로 보호됩니다.
-값이 없으면 로컬에서 인증 없이 열립니다. Compose의 `127.0.0.1` 포트 바인딩을 유지하고,
-외부 공개 대신 SSH 터널이나 VPN으로 접근하세요.
+관리자 현황 화면은 `http://127.0.0.1:8000/admin`입니다. 항상 DB 관리자
+계정 로그인이 필요하며, 비밀번호는 SQLite에 scrypt 해시로만 저장됩니다.
+`DASHBOARD_SESSION_SECRET`는 32자 이상의 임의 값으로 설정하고 `.env`에만 둡니다.
+외부 접근은 Cloudflare Tunnel과 Access를 사용하며 상세 절차는
+[`docs/cloudflare-dashboard.md`](docs/cloudflare-dashboard.md)를 따릅니다.
 
 테스트 공지와 제출 채널을 분리하려면 `.env`의 `TEST_SUBMISSION_CHANNEL`에 단일 테스트 제출 채널 ID를 지정합니다.
 

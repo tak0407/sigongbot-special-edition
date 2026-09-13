@@ -158,6 +158,14 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
+.cloudflared/
+cert.pem
+*.pem
+*.crt
+*.key
+*.swp
 .venv
 data/
 temp/

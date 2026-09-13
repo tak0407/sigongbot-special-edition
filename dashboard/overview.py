@@ -217,6 +217,7 @@ async def handle(request: web.Request) -> web.Response:
             subtitle=f"{REFRESH_SECONDS}초마다 자동 새로고침 · 기준 {escape(data['generated_at'])} (KST)",
             body=body,
             refresh=True,
+            request=request,
         ),
         content_type="text/html",
     )

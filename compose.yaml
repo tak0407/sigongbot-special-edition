@@ -29,6 +29,22 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: sigongbot-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN is required}
+    depends_on:
+      sigongbot:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   temp-data:
   database-data:

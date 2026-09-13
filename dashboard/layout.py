@@ -3,6 +3,7 @@
 from html import escape
 
 from dashboard.common import REFRESH_SECONDS
+from dashboard.auth import AUTH_CONTEXT, csrf_token
 
 NAV = [
     ("/admin", "대시보드", "이번 회차 제출 현황"),
@@ -51,6 +52,8 @@ a{color:#2b5ce6}
 select,button{font:inherit;padding:6px 10px;border:1px solid #d0d5dd;border-radius:8px;background:#fff}
 button{cursor:pointer}
 button.retry{border-color:#2b5ce6;color:#2b5ce6}
+.account{padding:18px;border-top:1px solid #e4e7ec;margin-top:14px;font-size:12px;color:#667085}
+.account form{margin-top:8px}.account button{font-size:12px;padding:5px 9px}
 .pager{display:flex;gap:10px;align-items:center;margin-top:16px;font-size:14px}
 .body-field{margin:14px 0}
 .body-field .label{font-size:12px;color:#667085;margin-bottom:4px}
@@ -79,17 +82,26 @@ def render(
     subtitle: str,
     body: str,
     refresh: bool = False,
+    request=None,
 ) -> str:
     meta_refresh = (
         f'<meta http-equiv="refresh" content="{REFRESH_SECONDS}">' if refresh else ""
     )
+    account = ""
+    if request is not None and request.get(AUTH_CONTEXT):
+        account = (
+            f'<div class="account">{escape(request[AUTH_CONTEXT].username)}'
+            '<form method="post" action="/admin/logout">'
+            f'<input type="hidden" name="csrf_token" value="{csrf_token(request)}">'
+            '<button type="submit">로그아웃</button></form></div>'
+        )
     return f"""<!doctype html>
 <html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 {meta_refresh}
 <title>{escape(title)}</title>
 <style>{STYLE}</style>
 <body><div class="shell">
-<nav class="side"><div class="brand">시공삶 관리자</div>{_nav(active)}</nav>
+<nav class="side"><div class="brand">시공삶 관리자</div>{_nav(active)}{account}</nav>
 <main><header><h1>{escape(heading)}</h1><small>{subtitle}</small></header>
 {body}
 </main></div></body></html>"""

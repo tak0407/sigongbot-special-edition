@@ -8,7 +8,7 @@ from loguru import logger
 
 from dashboard import directory as slack_directory
 from dashboard import layout
-from dashboard.auth import require_admin
+from dashboard.auth import csrf_token, require_admin
 from dashboard.common import PAGE_SIZE, page_numbers, rows, since, to_kst, truncate
 from database.sqlite import get_connection
 
@@ -158,6 +158,7 @@ async def handle_list(request: web.Request) -> web.Response:
             heading="AI 처리 큐",
             subtitle="질문형 회고 이미지 정리 작업입니다. 실패한 작업은 상세에서 다시 시도할 수 있습니다.",
             body=body,
+            request=request,
         ),
         content_type="text/html",
     )
@@ -179,6 +180,7 @@ async def handle_detail(request: web.Request) -> web.Response:
     if row["status"] == "failed":
         retry = (
             f'<form method="post" action="/admin/ai-jobs/{row["id"]}/retry">'
+            f'<input type="hidden" name="csrf_token" value="{csrf_token(request)}">'
             '<button class="retry" type="submit">다시 시도</button></form>'
         )
     blocks = ""
@@ -213,6 +215,7 @@ async def handle_detail(request: web.Request) -> web.Response:
             heading=f"AI 작업 #{row['id']}",
             subtitle=escape(row["status"]),
             body=body,
+            request=request,
         ),
         content_type="text/html",
     )

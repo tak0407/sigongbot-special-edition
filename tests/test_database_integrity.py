@@ -115,6 +115,16 @@ class MigrationTest(unittest.TestCase):
                     "INSERT INTO users (user_id, real_name) VALUES ('U11111111', '중복')"
                 )
 
+    def test_admin_authentication_tables_are_migrated(self):
+        initialize_database()
+        with closing(get_connection()) as connection:
+            self.assertEqual(
+                columns(connection, "admin_users"),
+                {"id", "username", "password_hash", "is_active", "created_at", "updated_at"},
+            )
+            self.assertIn("token_hash", columns(connection, "admin_sessions"))
+            self.assertIn("locked_until", columns(connection, "admin_login_attempts"))
+
     def test_legacy_database_gains_new_columns(self):
         self.legacy_database(("U11111111",))
         initialize_database()

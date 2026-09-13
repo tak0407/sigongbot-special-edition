@@ -1,5 +1,5 @@
-import base64
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +10,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from config import settings
 from dashboard import register_dashboard_routes
+from dashboard import auth
 from dashboard import directory as slack_directory
 from database.sqlite import get_connection, initialize_database
 
@@ -47,7 +48,8 @@ class AdminWebTestCase(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.enterContext(patch.object(settings, "DATABASE_PATH", str(Path(self.temporary.name) / "test.db")))
-        self.enterContext(patch.object(settings, "DASHBOARD_PASSWORD", "test-password"))
+        self.enterContext(patch.object(settings, "DASHBOARD_PASSWORD", ""))
+        self.enterContext(patch.object(settings, "DASHBOARD_SESSION_SECRET", "test-session-secret-at-least-32-characters"))
         # parse_submission_teams가 만드는 멤버 ID -> 채널 ID 형태다.
         # .env의 SUBMISSION_TEAMS(채널 -> 멤버 목록)와 방향이 반대이므로 주의한다.
         # 두 명을 배정하고 한 명만 제출시켜 미제출 집계까지 확인한다.
@@ -55,6 +57,8 @@ class AdminWebTestCase(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(settings, "SESSION_NAME_OVERRIDE", "6기 1회차"))
         slack_directory.reset_cache()
         initialize_database()
+        auth.create_admin("admin", "test-password-long")
+        self.session_token = auth._create_session(1)
         with get_connection() as connection:
             connection.execute("""INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item) VALUES ('U11111111', '6기 1회차', 'C11111111', '1.0', '좋음', '개선', '학습', '실행')""")
             # 지난 회차 제출 1건. created_at은 SQLite가 UTC로 기록하는 형식 그대로 넣어
@@ -82,34 +86,37 @@ class AdminWebTestCase(unittest.IsolatedAsyncioTestCase):
         return client
 
     async def _body(self, client: TestClient | None = None) -> str:
-        token = base64.b64encode(b"admin:test-password").decode()
         target = client or self.client
-        response = await target.get("/admin", headers={"Authorization": f"Basic {token}"})
+        response = await target.get("/admin", headers=self._auth_headers())
         self.assertEqual(response.status, 200)
         return await response.text()
 
     async def _get(self, path: str, client: TestClient | None = None):
-        token = base64.b64encode(b"admin:test-password").decode()
         target = client or self.client
-        return await target.get(path, headers={"Authorization": f"Basic {token}"})
+        return await target.get(path, headers=self._auth_headers())
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Cookie": f"{auth.SESSION_COOKIE}={self.session_token}"}
+
+    def _csrf(self) -> str:
+        return auth._csrf_token(self.session_token)
 
 
 class DashboardTest(AdminWebTestCase):
-    async def test_dashboard_requires_password_and_shows_submission(self):
-        response = await self.client.get("/admin")
-        self.assertEqual(response.status, 401)
-        token = base64.b64encode(b"admin:test-password").decode()
-        response = await self.client.get("/admin", headers={"Authorization": f"Basic {token}"})
+    async def test_dashboard_requires_session_and_shows_submission(self):
+        response = await self.client.get("/admin", allow_redirects=False)
+        self.assertEqual(response.status, 302)
+        self.assertTrue(response.headers["Location"].startswith("/admin/login"))
+        response = await self.client.get("/admin", headers=self._auth_headers())
         self.assertEqual(response.status, 200)
         body = await response.text()
         self.assertIn("1 / 2", body)
         self.assertIn("미제출 1명", body)
 
-    async def test_dashboard_allows_local_access_without_password(self):
+    async def test_dashboard_never_allows_access_without_session(self):
         with patch.object(settings, "DASHBOARD_PASSWORD", ""):
-            response = await self.client.get("/admin")
-        self.assertEqual(response.status, 200)
-        self.assertIn("1 / 2", await response.text())
+            response = await self.client.get("/admin", allow_redirects=False)
+        self.assertEqual(response.status, 302)
 
 
     async def test_dashboard_shows_slack_names_and_links(self):
@@ -196,8 +203,8 @@ class AdminTabsTest(AdminWebTestCase):
             "/admin/schedule",
         ):
             with self.subTest(path=path):
-                response = await self.client.get(path)
-                self.assertEqual(response.status, 401)
+                response = await self.client.get(path, allow_redirects=False)
+                self.assertEqual(response.status, 302)
 
     async def test_tabs_share_navigation(self):
         response = await self._get("/admin/schedule")
@@ -238,11 +245,11 @@ class AdminTabsTest(AdminWebTestCase):
         self.assertIn("다시 시도", detail)
 
     async def test_retry_requeues_only_failed_jobs(self):
-        token = base64.b64encode(b"admin:test-password").decode()
-        headers = {"Authorization": f"Basic {token}"}
-
         response = await self.client.post(
-            "/admin/ai-jobs/1/retry", headers=headers, allow_redirects=False
+            "/admin/ai-jobs/1/retry",
+            headers=self._auth_headers(),
+            data={"csrf_token": self._csrf()},
+            allow_redirects=False,
         )
         self.assertEqual(response.status, 302)
         with get_connection() as connection:
@@ -253,7 +260,10 @@ class AdminTabsTest(AdminWebTestCase):
 
         # 완료된 작업은 다시 시도할 수 없다.
         conflict = await self.client.post(
-            "/admin/ai-jobs/2/retry", headers=headers, allow_redirects=False
+            "/admin/ai-jobs/2/retry",
+            headers=self._auth_headers(),
+            data={"csrf_token": self._csrf()},
+            allow_redirects=False,
         )
         self.assertEqual(conflict.status, 409)
 
@@ -273,6 +283,91 @@ class AdminTabsTest(AdminWebTestCase):
         self.assertNotIn("5기 12회차", current)
         every = await (await self._get("/admin/schedule?all=1")).text()
         self.assertIn("5기 12회차", every)
+
+
+class AdminAuthenticationTest(AdminWebTestCase):
+    async def _login_form(self):
+        response = await self.client.get("/admin/login")
+        body = await response.text()
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', body).group(1)
+        cookie = response.cookies[auth.LOGIN_CSRF_COOKIE]
+        return csrf, cookie.value, response
+
+    async def test_login_cookie_is_hardened_and_logout_revokes_session(self):
+        csrf, nonce, _ = await self._login_form()
+        response = await self.client.post(
+            "/admin/login",
+            data={"username": "admin", "password": "test-password-long", "csrf_token": csrf},
+            headers={"Cookie": f"{auth.LOGIN_CSRF_COOKIE}={nonce}"},
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status, 302)
+        set_cookie = response.headers.getall("Set-Cookie")
+        session_header = next(value for value in set_cookie if value.startswith(auth.SESSION_COOKIE + "="))
+        for attribute in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/admin"):
+            self.assertIn(attribute, session_header)
+        token = response.cookies[auth.SESSION_COOKIE].value
+
+        rejected = await self.client.post(
+            "/admin/logout",
+            data={"csrf_token": "wrong"},
+            headers={"Cookie": f"{auth.SESSION_COOKIE}={token}"},
+            allow_redirects=False,
+        )
+        self.assertEqual(rejected.status, 403)
+        logged_out = await self.client.post(
+            "/admin/logout",
+            data={"csrf_token": auth._csrf_token(token)},
+            headers={"Cookie": f"{auth.SESSION_COOKIE}={token}"},
+            allow_redirects=False,
+        )
+        self.assertEqual(logged_out.status, 302)
+        after = await self.client.get(
+            "/admin", headers={"Cookie": f"{auth.SESSION_COOKIE}={token}"}, allow_redirects=False
+        )
+        self.assertEqual(after.status, 302)
+
+    async def test_login_rejects_csrf_and_limits_failures(self):
+        csrf, nonce, _ = await self._login_form()
+        missing = await self.client.post(
+            "/admin/login", data={"username": "admin", "password": "test-password-long"}
+        )
+        self.assertEqual(missing.status, 403)
+        headers = {"Cookie": f"{auth.LOGIN_CSRF_COOKIE}={nonce}"}
+        for _ in range(auth.MAX_LOGIN_FAILURES):
+            failed = await self.client.post(
+                "/admin/login",
+                data={"username": "admin", "password": "wrong-password", "csrf_token": csrf},
+                headers=headers,
+            )
+            self.assertEqual(failed.status, 401)
+        locked = await self.client.post(
+            "/admin/login",
+            data={"username": "admin", "password": "test-password-long", "csrf_token": csrf},
+            headers=headers,
+        )
+        self.assertEqual(locked.status, 429)
+
+    async def test_state_change_requires_csrf(self):
+        response = await self.client.post(
+            "/admin/ai-jobs/1/retry", headers=self._auth_headers(), allow_redirects=False
+        )
+        self.assertEqual(response.status, 403)
+
+    async def test_password_is_stored_as_scrypt_hash(self):
+        with get_connection() as connection:
+            stored = connection.execute(
+                "SELECT password_hash FROM admin_users WHERE username = 'admin'"
+            ).fetchone()[0]
+        self.assertTrue(stored.startswith("scrypt$"))
+        self.assertNotIn("test-password-long", stored)
+
+    def test_production_requires_session_secret(self):
+        with patch.object(settings, "ENV", "prod"), patch.object(
+            settings, "DASHBOARD_SESSION_SECRET", ""
+        ):
+            with self.assertRaises(RuntimeError):
+                auth.validate_dashboard_security()
 
 
 if __name__ == "__main__":
