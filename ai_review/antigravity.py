@@ -8,6 +8,14 @@ from config import settings
 from ai_review.runtime import AI_SEMAPHORE
 
 
+def validate_antigravity_runtime() -> str:
+    """AI 호출 전에 실행 파일을 확인한다."""
+    executable = shutil.which(settings.ANTIGRAVITY_COMMAND)
+    if executable is None:
+        raise RuntimeError("Antigravity CLI(agy)를 찾지 못했습니다.")
+    return executable
+
+
 def _parse_result(stdout: str) -> dict[str, Any]:
     for line in reversed(stdout.splitlines()):
         line = line.strip()
@@ -28,9 +36,7 @@ async def run_antigravity(
     working_directory: Path,
     schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    executable = shutil.which(settings.ANTIGRAVITY_COMMAND)
-    if executable is None:
-        raise RuntimeError("Antigravity CLI(agy)를 찾지 못했습니다.")
+    executable = validate_antigravity_runtime()
 
     command = [
         executable,
@@ -57,6 +63,7 @@ async def run_antigravity(
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=working_directory,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

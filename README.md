@@ -27,7 +27,7 @@
 
 Slack 이미지 첨부에는 `files:read` 권한이 필요합니다. 매니페스트는 이미지 기능을 구현하기 전부터 이 권한을 포함합니다.
 
-> 질문형 회고 정리는 실행 환경에서 인증된 Antigravity CLI(`agy`)를 찾을 수 있어야 동작합니다. 현재 Docker 이미지에는 `agy`가 포함되어 있지 않으므로, Ubuntu 배포 전에는 컨테이너용 설치·인증 방식을 추가로 구성해야 합니다. `agy`가 없어도 일반 회고 작성과 조회는 동작하지만 질문형 회고는 기본 매핑으로 처리됩니다.
+> 질문형 회고 정리는 Docker 이미지에 설치된 Antigravity CLI(`agy`)와 Google 계정 로그인을 사용합니다. 별도 Gemini API 키는 필요하지 않습니다. AI 호출이 실패해도 일반 회고 작성과 조회는 동작하며, 질문형 회고는 기본 매핑으로 처리됩니다.
 
 ## Ubuntu 배포
 
@@ -71,6 +71,8 @@ SUBMISSION_TEAMS='{"C11111111":["U11111111","U22222222"],"C22222222":["U33333333
 
 토큰과 키는 `.env`에만 저장합니다. `.env`는 Git에서 제외되어 있습니다.
 
+질문형 회고의 AI 정리는 별도 Gemini API 키 대신 `agy`의 Google 계정 인증을 사용합니다. 인증정보는 전용 `antigravity-keyring` Docker 볼륨에 저장되며 호스트 사용자 키링과 공유하지 않습니다. 운영 미니 PC의 `.env` 권한은 `600`으로 유지합니다.
+
 ### 4. 실행과 확인
 
 ```bash
@@ -78,6 +80,20 @@ docker compose up -d --build
 docker compose ps
 docker compose logs -f
 ```
+
+최초 배포 후 한 번만 컨테이너의 `agy`에 로그인합니다.
+
+```bash
+docker compose exec sigongbot agy
+```
+
+표시되는 URL을 브라우저에서 열어 로그인하고 인증 코드를 터미널에 붙여 넣습니다. 로그인 확인 후 `Ctrl+C`로 종료해도 인증은 전용 Docker 볼륨에 유지됩니다. 다음 명령이 모델 목록을 출력하면 비대화형 인증도 정상입니다.
+
+```bash
+docker compose exec sigongbot agy models
+```
+
+이후 컨테이너를 재시작하고 시작 로그의 `질문형 회고 AI CLI 준비 완료`와 실제 질문형 회고 제출을 확인합니다.
 
 Slack Socket Mode를 사용하므로 공유기 포트 포워딩이나 공개 도메인이 필요하지 않습니다. 상태 확인용 HTTP 포트는 미니 PC의 `127.0.0.1:8000`에만 연결됩니다.
 
