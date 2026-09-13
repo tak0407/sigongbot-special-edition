@@ -65,6 +65,7 @@ class Settings:
         self.SUPPORT_CHANNEL: str = os.getenv("SUPPORT_CHANNEL", "")
 
         self.ADMIN_IDS: list[str] = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
+        self.DASHBOARD_PASSWORD: str = os.getenv("DASHBOARD_PASSWORD", "")
 
         self.DATABASE_PATH: str = os.getenv(
             "DATABASE_PATH", "data/sigongbot.db"

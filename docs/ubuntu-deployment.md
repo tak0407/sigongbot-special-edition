@@ -60,6 +60,7 @@ chmod 600 .env
 - `ADMIN_CHANNEL`
 - `SUPPORT_CHANNEL`
 - `ADMIN_IDS`
+- 관리자 웹을 사용하면 `DASHBOARD_PASSWORD` (긴 임의 문자열)
 - `DATABASE_PATH=data/sigongbot.db`
 - 테스트 중이면 `SESSION_NAME_OVERRIDE=테스트 회차`
 - 테스트 공지와 제출 채널을 분리하면 `TEST_SUBMISSION_CHANNEL`
@@ -117,6 +118,8 @@ curl --fail http://127.0.0.1:8000/health
 ```
 
 로그나 상태 출력에 토큰이 포함되지 않았는지 확인한다.
+
+관리자 웹은 미니 PC에서만 `http://127.0.0.1:8000/admin`으로 열리며, 사용자 이름은 `admin`이고 비밀번호는 `.env`의 `DASHBOARD_PASSWORD`다. 공개 포트나 도메인은 열지 말고 SSH 터널 또는 VPN을 사용한다.
 
 ## 7. Slack 기능 검증
 

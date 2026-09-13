@@ -3,6 +3,7 @@ from aiohttp import web
 from loguru import logger
 from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from config import settings
+from dashboard import register_dashboard_routes
 from database.sqlite import initialize_database
 from slack.event_handler import app as slack_app
 from slack.events.test_announcement import run_sixth_first_announcement_scheduler
@@ -18,6 +19,7 @@ async def main():
     app = web.Application()
     app.router.add_get("/", health_check)
     app.router.add_get("/health", health_check)
+    register_dashboard_routes(app)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", 8000)
