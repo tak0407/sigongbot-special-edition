@@ -7,7 +7,13 @@ from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 from config import settings
-from constants import SIXTH_FIRST_SESSION_START
+from constants import (
+    DUE_DATES,
+    SESSION_NAMES,
+    SIXTH_FIRST_PREVIOUS_DUE,
+    SIXTH_FIRST_SESSION_DUE,
+    SIXTH_FIRST_SESSION_START,
+)
 from database.retrospective import create_retrospective
 from database.sqlite import initialize_database
 from slack.events.command_retrospective import build_retrospective_view
@@ -71,6 +77,34 @@ class SixthSessionScheduleTest(unittest.TestCase):
             self.assertTrue(active[3])
             self.assertEqual(SIXTH_FIRST_SESSION_START.weekday(), 4)
             self.assertEqual(SIXTH_FIRST_SESSION_START.tzinfo, ZoneInfo("Asia/Seoul"))
+
+    def test_session_anchors_survive_appending_new_sessions(self):
+        """회차를 뒤에 붙여도 6기 1회차 기준점이 밀리지 않아야 한다.
+
+        예전에는 DUE_DATES[-1] / DUE_DATES[-2] 같은 위치 참조를 써서
+        6기 2회차를 추가하자 공지 스케줄러 마감이 12월로 밀렸다.
+        """
+        self.assertEqual(len(DUE_DATES), len(SESSION_NAMES))
+        expected_due = DUE_DATES[SESSION_NAMES.index(SIXTH_FIRST_SESSION_NAME)]
+        self.assertEqual(SIXTH_FIRST_SESSION_DUE, expected_due)
+        self.assertEqual(
+            SIXTH_FIRST_PREVIOUS_DUE,
+            DUE_DATES[SESSION_NAMES.index(SIXTH_FIRST_SESSION_NAME) - 1],
+        )
+        # 스케줄러 창은 1회차 마감에서 닫혀야 한다. 마지막 회차 마감이 아니다.
+        self.assertLess(SIXTH_FIRST_SESSION_DUE, DUE_DATES[-1])
+
+    def test_sixth_cohort_runs_weekly_through_twelfth_session(self):
+        with patch.object(settings, "SESSION_NAME_OVERRIDE", ""):
+            for number in range(1, 13):
+                self.assertIn(f"6기 {number}회차", SESSION_NAMES)
+            first = DUE_DATES[SESSION_NAMES.index("6기 1회차")]
+            twelfth = DUE_DATES[SESSION_NAMES.index("6기 12회차")]
+            self.assertEqual(twelfth - first, datetime.timedelta(weeks=11))
+            # 1회차 마감 직후에는 2회차가 열려 있어야 한다.
+            just_after = first + datetime.timedelta(minutes=1)
+            self.assertEqual(get_current_session_info(just_after)[1], "6기 2회차")
+            self.assertTrue(get_current_session_info(just_after)[3])
 
     def test_image_upload_has_no_analysis_type_selector(self):
         view = build_retrospective_view(

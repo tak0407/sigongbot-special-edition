@@ -77,6 +77,17 @@ DUE_DATES = [
     datetime.datetime(2026, 8, 18, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 5기 추가2회차
     datetime.datetime(2026, 8, 25, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 5기 추가3회차
     datetime.datetime(2026, 9, 15, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 1회차
+    datetime.datetime(2026, 9, 22, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 2회차
+    datetime.datetime(2026, 9, 29, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 3회차
+    datetime.datetime(2026, 10, 6, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 4회차
+    datetime.datetime(2026, 10, 13, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 5회차
+    datetime.datetime(2026, 10, 20, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 6회차
+    datetime.datetime(2026, 10, 27, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 7회차
+    datetime.datetime(2026, 11, 3, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 8회차
+    datetime.datetime(2026, 11, 10, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 9회차
+    datetime.datetime(2026, 11, 17, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 10회차
+    datetime.datetime(2026, 11, 24, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 11회차
+    datetime.datetime(2026, 12, 1, 5, 0, 0, tzinfo=ZoneInfo("Asia/Seoul")),  # 6기 12회차
 ]
 
 # 각 마감일의 설명
@@ -148,4 +159,23 @@ SESSION_NAMES = [
     "5기 추가2회차",
     "5기 추가3회차",
     "6기 1회차",
+    "6기 2회차",
+    "6기 3회차",
+    "6기 4회차",
+    "6기 5회차",
+    "6기 6회차",
+    "6기 7회차",
+    "6기 8회차",
+    "6기 9회차",
+    "6기 10회차",
+    "6기 11회차",
+    "6기 12회차",
 ]
+
+# 회차 목록 뒤에 새 회차를 붙여도 깨지지 않도록 위치(DUE_DATES[-1] 등)가 아니라
+# 이름으로 앵커를 잡는다.
+SIXTH_FIRST_SESSION_NAME = "6기 1회차"
+_SIXTH_FIRST_INDEX = SESSION_NAMES.index(SIXTH_FIRST_SESSION_NAME)
+SIXTH_FIRST_SESSION_DUE = DUE_DATES[_SIXTH_FIRST_INDEX]
+# 5기 마지막 마감. 이 시점부터 6기 시작 전까지는 진행 중인 회차가 없다.
+SIXTH_FIRST_PREVIOUS_DUE = DUE_DATES[_SIXTH_FIRST_INDEX - 1]
