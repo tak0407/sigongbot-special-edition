@@ -14,6 +14,11 @@ async def health_check(request):
     return web.Response(text="OK", status=200)
 
 
+async def dashboard_entry(request):
+    """대시보드 전용 호스트에서 루트 접속 시 관리자 로그인으로 이동한다."""
+    raise web.HTTPFound("/admin")
+
+
 async def main():
     validate_dashboard_security()
     initialize_database()
@@ -26,7 +31,7 @@ async def main():
 
     # HTTP 서버 설정
     app = web.Application()
-    app.router.add_get("/", health_check)
+    app.router.add_get("/", dashboard_entry)
     app.router.add_get("/health", health_check)
     register_dashboard_routes(app, slack_app.client)
     runner = web.AppRunner(app)
