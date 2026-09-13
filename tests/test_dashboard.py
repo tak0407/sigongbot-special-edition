@@ -1,4 +1,5 @@
 import base64
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,9 +8,9 @@ from unittest.mock import patch
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-import dashboard
 from config import settings
 from dashboard import register_dashboard_routes
+from dashboard import directory as slack_directory
 from database.sqlite import get_connection, initialize_database
 
 
@@ -39,7 +40,9 @@ class FakeSlackClient:
         return {"channel": {"name": f"team-{channel[-4:]}"}}
 
 
-class DashboardTest(unittest.IsolatedAsyncioTestCase):
+class AdminWebTestCase(unittest.IsolatedAsyncioTestCase):
+    """모든 관리자 웹 테스트가 함께 쓰는 준비 코드."""
+
     async def asyncSetUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -50,8 +53,7 @@ class DashboardTest(unittest.IsolatedAsyncioTestCase):
         # 두 명을 배정하고 한 명만 제출시켜 미제출 집계까지 확인한다.
         self.enterContext(patch.object(settings, "SUBMISSION_DESTINATIONS", {"U11111111": "C11111111", "U22222222": "C11111111"}))
         self.enterContext(patch.object(settings, "SESSION_NAME_OVERRIDE", "6기 1회차"))
-        dashboard._directory_cache["value"] = None
-        dashboard._directory_cache["expires_at"] = None
+        slack_directory.reset_cache()
         initialize_database()
         with get_connection() as connection:
             connection.execute("""INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item) VALUES ('U11111111', '6기 1회차', 'C11111111', '1.0', '좋음', '개선', '학습', '실행')""")
@@ -59,6 +61,16 @@ class DashboardTest(unittest.IsolatedAsyncioTestCase):
             # KST 변환과 회차별 추이를 함께 검증한다.
             connection.execute("""INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item, created_at) VALUES ('U33333333', '5기 12회차', 'C22222222', '2.0', '좋음', '개선', '학습', '실행', '2026-09-12 20:30:00')""")
             connection.execute("""INSERT INTO ai_review_jobs (user_id, slack_channel, slack_ts, file_id, retrospective_text, status, attempts, last_error, updated_at) VALUES ('U11111111', 'C11111111', '1.0', 'F11111111', '회고 본문', 'failed', 3, 'agy 실행 파일을 찾을 수 없습니다.', '2026-09-12 20:40:00')""")
+            connection.execute("""INSERT INTO ai_review_jobs (user_id, slack_channel, slack_ts, file_id, retrospective_text, status, attempts, updated_at) VALUES ('U22222222', 'C11111111', '3.0', 'F22222222', '다른 회고', 'completed', 1, '2026-09-12 20:45:00')""")
+            # 5개 질문 중 2개만 답한 진행 중 플로우.
+            connection.execute(
+                """INSERT INTO guided_reflections (flow_id, user_id, slack_channel, session_name, questions_json, answers_json, current_index, updated_at) VALUES (?, 'U22222222', 'C11111111', '6기 1회차', ?, ?, 2, '2026-09-12 20:00:00')""",
+                (
+                    "flow-abc",
+                    json.dumps([{"question": f"질문{i}"} for i in range(5)], ensure_ascii=False),
+                    json.dumps([{"answer": "첫 답변"}, {"answer": "둘째 답변"}], ensure_ascii=False),
+                ),
+            )
         self.client = await self._serve()
 
     async def _serve(self, slack_client=None) -> TestClient:
@@ -69,6 +81,20 @@ class DashboardTest(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(client.close)
         return client
 
+    async def _body(self, client: TestClient | None = None) -> str:
+        token = base64.b64encode(b"admin:test-password").decode()
+        target = client or self.client
+        response = await target.get("/admin", headers={"Authorization": f"Basic {token}"})
+        self.assertEqual(response.status, 200)
+        return await response.text()
+
+    async def _get(self, path: str, client: TestClient | None = None):
+        token = base64.b64encode(b"admin:test-password").decode()
+        target = client or self.client
+        return await target.get(path, headers={"Authorization": f"Basic {token}"})
+
+
+class DashboardTest(AdminWebTestCase):
     async def test_dashboard_requires_password_and_shows_submission(self):
         response = await self.client.get("/admin")
         self.assertEqual(response.status, 401)
@@ -85,13 +111,6 @@ class DashboardTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("1 / 2", await response.text())
 
-
-    async def _body(self, client: TestClient | None = None) -> str:
-        token = base64.b64encode(b"admin:test-password").decode()
-        target = client or self.client
-        response = await target.get("/admin", headers={"Authorization": f"Basic {token}"})
-        self.assertEqual(response.status, 200)
-        return await response.text()
 
     async def test_dashboard_shows_slack_names_and_links(self):
         slack = FakeSlackClient()
@@ -150,9 +169,110 @@ class DashboardTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("5기 12회차", trend)
         self.assertIn("6기 1회차", trend)
 
+    async def test_dashboard_counts_retrospectives_missing_post_record(self):
+        """Slack에는 올라갔지만 게시 기록이 끝나지 않은 회고를 눈에 띄게 센다."""
+        body = await self._body()
+        self.assertIn("게시 기록 미확인", body)
+        with get_connection() as connection:
+            connection.execute(
+                """INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item, slack_post_status) VALUES ('U22222222', '6기 1회차', 'C11111111', '', '좋음', '개선', '학습', '실행', 'pending')"""
+            )
+        body = await self._body()
+        self.assertIn('<div class="card alert">게시 기록 미확인<div class="number">1건</div>', body)
+
     async def test_dashboard_auto_refreshes(self):
         body = await self._body()
         self.assertIn('http-equiv="refresh"', body)
+
+
+
+class AdminTabsTest(AdminWebTestCase):
+    async def test_every_tab_requires_password(self):
+        for path in (
+            "/admin",
+            "/admin/retrospectives",
+            "/admin/ai-jobs",
+            "/admin/guided",
+            "/admin/schedule",
+        ):
+            with self.subTest(path=path):
+                response = await self.client.get(path)
+                self.assertEqual(response.status, 401)
+
+    async def test_tabs_share_navigation(self):
+        response = await self._get("/admin/schedule")
+        body = await response.text()
+        for label in ("대시보드", "회고 열람", "AI 처리 큐", "진행 중 회고", "회차 일정"):
+            self.assertIn(label, body)
+
+    async def test_retrospective_list_and_detail(self):
+        body = await (await self._get("/admin/retrospectives")).text()
+        self.assertIn("6기 1회차", body)
+        self.assertIn("5기 12회차", body)
+
+        # 회차 필터를 걸면 해당 회차만 남는다.
+        filtered = await (await self._get("/admin/retrospectives?session=5기 12회차")).text()
+        table = filtered.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+        self.assertIn("5기 12회차", table)
+        self.assertNotIn("6기 1회차", table)
+
+        detail = await (await self._get("/admin/retrospectives/1")).text()
+        # 상세에는 본문 네 항목이 모두 나온다.
+        for text in ("좋음", "개선", "학습", "실행"):
+            self.assertIn(text, detail)
+
+    async def test_retrospective_detail_404_for_unknown_id(self):
+        self.assertEqual((await self._get("/admin/retrospectives/9999")).status, 404)
+
+    async def test_ai_job_list_filter_and_detail(self):
+        body = await (await self._get("/admin/ai-jobs")).text()
+        self.assertIn("failed", body)
+        self.assertIn("completed", body)
+
+        only_failed = await (await self._get("/admin/ai-jobs?status=failed")).text()
+        table = only_failed.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+        self.assertNotIn("F22222222", table)
+
+        detail = await (await self._get("/admin/ai-jobs/1")).text()
+        self.assertIn("agy 실행 파일을 찾을 수 없습니다.", detail)
+        self.assertIn("다시 시도", detail)
+
+    async def test_retry_requeues_only_failed_jobs(self):
+        token = base64.b64encode(b"admin:test-password").decode()
+        headers = {"Authorization": f"Basic {token}"}
+
+        response = await self.client.post(
+            "/admin/ai-jobs/1/retry", headers=headers, allow_redirects=False
+        )
+        self.assertEqual(response.status, 302)
+        with get_connection() as connection:
+            status = connection.execute(
+                "SELECT status FROM ai_review_jobs WHERE id = 1"
+            ).fetchone()[0]
+        self.assertEqual(status, "pending")
+
+        # 완료된 작업은 다시 시도할 수 없다.
+        conflict = await self.client.post(
+            "/admin/ai-jobs/2/retry", headers=headers, allow_redirects=False
+        )
+        self.assertEqual(conflict.status, 409)
+
+    async def test_guided_tab_shows_progress_and_stall(self):
+        body = await (await self._get("/admin/guided")).text()
+        self.assertIn("3 / 5", body)      # current_index 2 -> 3번째 질문에서 멈춤
+        self.assertIn("둘째 답변", body)
+        self.assertIn("정체", body)        # 24시간 이상 갱신 없음
+
+    async def test_schedule_tab_lists_sessions_and_remaining(self):
+        body = await (await self._get("/admin/schedule")).text()
+        self.assertIn("6기 12회차", body)
+        self.assertIn("남은 회차", body)
+
+    async def test_schedule_tab_can_show_every_cohort(self):
+        current = await (await self._get("/admin/schedule")).text()
+        self.assertNotIn("5기 12회차", current)
+        every = await (await self._get("/admin/schedule?all=1")).text()
+        self.assertIn("5기 12회차", every)
 
 
 if __name__ == "__main__":
