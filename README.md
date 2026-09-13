@@ -56,7 +56,7 @@ chmod 600 .env
 ADMIN_IDS=U12345678,U87654321
 ```
 
-관리자 현황 화면은 `http://127.0.0.1:8000/admin`입니다. 항상 DB 관리자
+관리자 현황 화면은 `http://127.0.0.1:8000/`입니다. 항상 DB 관리자
 계정 로그인이 필요하며, 비밀번호는 SQLite에 scrypt 해시로만 저장됩니다.
 `DASHBOARD_SESSION_SECRET`는 32자 이상의 임의 값으로 설정하고 `.env`에만 둡니다.
 외부 접근은 Cloudflare Tunnel과 Access를 사용하며 상세 절차는

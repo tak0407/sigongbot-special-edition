@@ -87,7 +87,7 @@ class AdminWebTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def _body(self, client: TestClient | None = None) -> str:
         target = client or self.client
-        response = await target.get("/admin", headers=self._auth_headers())
+        response = await target.get("/", headers=self._auth_headers())
         self.assertEqual(response.status, 200)
         return await response.text()
 
@@ -104,10 +104,10 @@ class AdminWebTestCase(unittest.IsolatedAsyncioTestCase):
 
 class DashboardTest(AdminWebTestCase):
     async def test_dashboard_requires_session_and_shows_submission(self):
-        response = await self.client.get("/admin", allow_redirects=False)
+        response = await self.client.get("/", allow_redirects=False)
         self.assertEqual(response.status, 302)
-        self.assertTrue(response.headers["Location"].startswith("/admin/login"))
-        response = await self.client.get("/admin", headers=self._auth_headers())
+        self.assertTrue(response.headers["Location"].startswith("/login"))
+        response = await self.client.get("/", headers=self._auth_headers())
         self.assertEqual(response.status, 200)
         body = await response.text()
         self.assertIn("1 / 2", body)
@@ -115,7 +115,7 @@ class DashboardTest(AdminWebTestCase):
 
     async def test_dashboard_never_allows_access_without_session(self):
         with patch.object(settings, "DASHBOARD_PASSWORD", ""):
-            response = await self.client.get("/admin", allow_redirects=False)
+            response = await self.client.get("/", allow_redirects=False)
         self.assertEqual(response.status, 302)
 
 
@@ -196,57 +196,78 @@ class DashboardTest(AdminWebTestCase):
 class AdminTabsTest(AdminWebTestCase):
     async def test_every_tab_requires_password(self):
         for path in (
-            "/admin",
-            "/admin/retrospectives",
-            "/admin/ai-jobs",
-            "/admin/guided",
-            "/admin/schedule",
+            "/",
+            "/retrospectives",
+            "/ai-jobs",
+            "/guided",
+            "/schedule",
         ):
             with self.subTest(path=path):
                 response = await self.client.get(path, allow_redirects=False)
                 self.assertEqual(response.status, 302)
 
+    async def test_pages_link_to_root_paths_only(self):
+        for path in ("/", "/retrospectives", "/ai-jobs", "/guided", "/schedule"):
+            with self.subTest(path=path):
+                body = await (await self._get(path)).text()
+                self.assertNotIn("/admin", body)
+        self.assertNotIn("/admin", await (await self.client.get("/login")).text())
+
+    async def test_legacy_admin_paths_redirect_to_root(self):
+        for legacy, expected in (
+            ("/admin", "/"),
+            ("/admin/retrospectives", "/retrospectives"),
+            ("/admin/ai-jobs?status=failed", "/ai-jobs?status=failed"),
+            ("/admin/login", "/login"),
+        ):
+            with self.subTest(legacy=legacy):
+                response = await self.client.get(
+                    legacy, headers=self._auth_headers(), allow_redirects=False
+                )
+                self.assertEqual(response.status, 302)
+                self.assertEqual(response.headers["Location"], expected)
+
     async def test_tabs_share_navigation(self):
-        response = await self._get("/admin/schedule")
+        response = await self._get("/schedule")
         body = await response.text()
         for label in ("대시보드", "회고 열람", "AI 처리 큐", "진행 중 회고", "회차 일정"):
             self.assertIn(label, body)
 
     async def test_retrospective_list_and_detail(self):
-        body = await (await self._get("/admin/retrospectives")).text()
+        body = await (await self._get("/retrospectives")).text()
         self.assertIn("6기 1회차", body)
         self.assertIn("5기 12회차", body)
 
         # 회차 필터를 걸면 해당 회차만 남는다.
-        filtered = await (await self._get("/admin/retrospectives?session=5기 12회차")).text()
+        filtered = await (await self._get("/retrospectives?session=5기 12회차")).text()
         table = filtered.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
         self.assertIn("5기 12회차", table)
         self.assertNotIn("6기 1회차", table)
 
-        detail = await (await self._get("/admin/retrospectives/1")).text()
+        detail = await (await self._get("/retrospectives/1")).text()
         # 상세에는 본문 네 항목이 모두 나온다.
         for text in ("좋음", "개선", "학습", "실행"):
             self.assertIn(text, detail)
 
     async def test_retrospective_detail_404_for_unknown_id(self):
-        self.assertEqual((await self._get("/admin/retrospectives/9999")).status, 404)
+        self.assertEqual((await self._get("/retrospectives/9999")).status, 404)
 
     async def test_ai_job_list_filter_and_detail(self):
-        body = await (await self._get("/admin/ai-jobs")).text()
+        body = await (await self._get("/ai-jobs")).text()
         self.assertIn("failed", body)
         self.assertIn("completed", body)
 
-        only_failed = await (await self._get("/admin/ai-jobs?status=failed")).text()
+        only_failed = await (await self._get("/ai-jobs?status=failed")).text()
         table = only_failed.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
         self.assertNotIn("F22222222", table)
 
-        detail = await (await self._get("/admin/ai-jobs/1")).text()
+        detail = await (await self._get("/ai-jobs/1")).text()
         self.assertIn("agy 실행 파일을 찾을 수 없습니다.", detail)
         self.assertIn("다시 시도", detail)
 
     async def test_retry_requeues_only_failed_jobs(self):
         response = await self.client.post(
-            "/admin/ai-jobs/1/retry",
+            "/ai-jobs/1/retry",
             headers=self._auth_headers(),
             data={"csrf_token": self._csrf()},
             allow_redirects=False,
@@ -260,7 +281,7 @@ class AdminTabsTest(AdminWebTestCase):
 
         # 완료된 작업은 다시 시도할 수 없다.
         conflict = await self.client.post(
-            "/admin/ai-jobs/2/retry",
+            "/ai-jobs/2/retry",
             headers=self._auth_headers(),
             data={"csrf_token": self._csrf()},
             allow_redirects=False,
@@ -268,26 +289,26 @@ class AdminTabsTest(AdminWebTestCase):
         self.assertEqual(conflict.status, 409)
 
     async def test_guided_tab_shows_progress_and_stall(self):
-        body = await (await self._get("/admin/guided")).text()
+        body = await (await self._get("/guided")).text()
         self.assertIn("3 / 5", body)      # current_index 2 -> 3번째 질문에서 멈춤
         self.assertIn("둘째 답변", body)
         self.assertIn("정체", body)        # 24시간 이상 갱신 없음
 
     async def test_schedule_tab_lists_sessions_and_remaining(self):
-        body = await (await self._get("/admin/schedule")).text()
+        body = await (await self._get("/schedule")).text()
         self.assertIn("6기 12회차", body)
         self.assertIn("남은 회차", body)
 
     async def test_schedule_tab_can_show_every_cohort(self):
-        current = await (await self._get("/admin/schedule")).text()
+        current = await (await self._get("/schedule")).text()
         self.assertNotIn("5기 12회차", current)
-        every = await (await self._get("/admin/schedule?all=1")).text()
+        every = await (await self._get("/schedule?all=1")).text()
         self.assertIn("5기 12회차", every)
 
 
 class AdminAuthenticationTest(AdminWebTestCase):
     async def _login_form(self):
-        response = await self.client.get("/admin/login")
+        response = await self.client.get("/login")
         body = await response.text()
         csrf = re.search(r'name="csrf_token" value="([^"]+)"', body).group(1)
         cookie = response.cookies[auth.LOGIN_CSRF_COOKIE]
@@ -296,7 +317,7 @@ class AdminAuthenticationTest(AdminWebTestCase):
     async def test_login_cookie_is_hardened_and_logout_revokes_session(self):
         csrf, nonce, _ = await self._login_form()
         response = await self.client.post(
-            "/admin/login",
+            "/login",
             data={"username": "admin", "password": "test-password-long", "csrf_token": csrf},
             headers={"Cookie": f"{auth.LOGIN_CSRF_COOKIE}={nonce}"},
             allow_redirects=False,
@@ -304,45 +325,57 @@ class AdminAuthenticationTest(AdminWebTestCase):
         self.assertEqual(response.status, 302)
         set_cookie = response.headers.getall("Set-Cookie")
         session_header = next(value for value in set_cookie if value.startswith(auth.SESSION_COOKIE + "="))
-        for attribute in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/admin"):
+        for attribute in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/"):
             self.assertIn(attribute, session_header)
         token = response.cookies[auth.SESSION_COOKIE].value
 
         rejected = await self.client.post(
-            "/admin/logout",
+            "/logout",
             data={"csrf_token": "wrong"},
             headers={"Cookie": f"{auth.SESSION_COOKIE}={token}"},
             allow_redirects=False,
         )
         self.assertEqual(rejected.status, 403)
         logged_out = await self.client.post(
-            "/admin/logout",
+            "/logout",
             data={"csrf_token": auth._csrf_token(token)},
             headers={"Cookie": f"{auth.SESSION_COOKIE}={token}"},
             allow_redirects=False,
         )
         self.assertEqual(logged_out.status, 302)
         after = await self.client.get(
-            "/admin", headers={"Cookie": f"{auth.SESSION_COOKIE}={token}"}, allow_redirects=False
+            "/", headers={"Cookie": f"{auth.SESSION_COOKIE}={token}"}, allow_redirects=False
         )
         self.assertEqual(after.status, 302)
+
+    async def test_login_returns_to_root_paths_only(self):
+        # 외부 주소나 예전 /admin 경로가 next로 들어와도 루트 기준으로만 되돌린다.
+        self.assertEqual(auth._safe_next("//evil.example.com"), "/")
+        self.assertEqual(auth._safe_next("https://evil.example.com"), "/")
+        self.assertEqual(auth._safe_next("/admin"), "/")
+        self.assertEqual(auth._safe_next("/admin/schedule"), "/schedule")
+        self.assertEqual(auth._safe_next("/ai-jobs?status=failed"), "/ai-jobs?status=failed")
+
+    async def test_protected_page_redirects_to_root_login_with_next(self):
+        response = await self.client.get("/schedule", allow_redirects=False)
+        self.assertEqual(response.headers["Location"], "/login?next=/schedule")
 
     async def test_login_rejects_csrf_and_limits_failures(self):
         csrf, nonce, _ = await self._login_form()
         missing = await self.client.post(
-            "/admin/login", data={"username": "admin", "password": "test-password-long"}
+            "/login", data={"username": "admin", "password": "test-password-long"}
         )
         self.assertEqual(missing.status, 403)
         headers = {"Cookie": f"{auth.LOGIN_CSRF_COOKIE}={nonce}"}
         for _ in range(auth.MAX_LOGIN_FAILURES):
             failed = await self.client.post(
-                "/admin/login",
+                "/login",
                 data={"username": "admin", "password": "wrong-password", "csrf_token": csrf},
                 headers=headers,
             )
             self.assertEqual(failed.status, 401)
         locked = await self.client.post(
-            "/admin/login",
+            "/login",
             data={"username": "admin", "password": "test-password-long", "csrf_token": csrf},
             headers=headers,
         )
@@ -350,7 +383,7 @@ class AdminAuthenticationTest(AdminWebTestCase):
 
     async def test_state_change_requires_csrf(self):
         response = await self.client.post(
-            "/admin/ai-jobs/1/retry", headers=self._auth_headers(), allow_redirects=False
+            "/ai-jobs/1/retry", headers=self._auth_headers(), allow_redirects=False
         )
         self.assertEqual(response.status, 403)
 

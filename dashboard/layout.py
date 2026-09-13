@@ -6,11 +6,11 @@ from dashboard.common import REFRESH_SECONDS
 from dashboard.auth import AUTH_CONTEXT, csrf_token
 
 NAV = [
-    ("/admin", "대시보드", "이번 회차 제출 현황"),
-    ("/admin/retrospectives", "회고 열람", "제출된 회고 본문"),
-    ("/admin/ai-jobs", "AI 처리 큐", "질문형 회고 정리 작업"),
-    ("/admin/guided", "진행 중 회고", "질문형 회고 이탈 추적"),
-    ("/admin/schedule", "회차 일정", "마감일과 남은 회차"),
+    ("/", "대시보드", "이번 회차 제출 현황"),
+    ("/retrospectives", "회고 열람", "제출된 회고 본문"),
+    ("/ai-jobs", "AI 처리 큐", "질문형 회고 정리 작업"),
+    ("/guided", "진행 중 회고", "질문형 회고 이탈 추적"),
+    ("/schedule", "회차 일정", "마감일과 남은 회차"),
 ]
 
 STYLE = """
@@ -91,7 +91,7 @@ def render(
     if request is not None and request.get(AUTH_CONTEXT):
         account = (
             f'<div class="account">{escape(request[AUTH_CONTEXT].username)}'
-            '<form method="post" action="/admin/logout">'
+            '<form method="post" action="/logout">'
             f'<input type="hidden" name="csrf_token" value="{csrf_token(request)}">'
             '<button type="submit">로그아웃</button></form></div>'
         )

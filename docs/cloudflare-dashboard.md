@@ -1,6 +1,6 @@
 # Cloudflare 관리자 대시보드 배포
 
-이 구성은 공개 인바운드 포트 없이 Cloudflare Tunnel로 `/admin`을 전달하고,
+이 구성은 공개 인바운드 포트 없이 Cloudflare Tunnel로 관리자 웹 루트(`/`)를 전달하고,
 Cloudflare Access와 앱 로그인을 두 겹의 인증으로 사용한다. 원본 서버는 호스트의
 `127.0.0.1:8000`과 Compose 네트워크에서만 접근할 수 있다.
 
@@ -58,7 +58,7 @@ Cloudflare Zero Trust에서 다음과 같이 설정한다.
 3. Access 앱을 같은 호스트 전체(`admin.sigonglife.link/*`)에 연결한다.
 4. Allow 정책에는 확인된 관리자 이메일만 추가하고, 너무 넓은 도메인·모두
    허용·Bypass 정책은 두지 않는다.
-5. 같은 Tunnel에 `/admin`을 우회하는 다른 호스트명이나 더 넓은 공개 경로가 없는지
+5. 같은 Tunnel에 관리자 웹을 우회하는 다른 호스트명이나 더 넓은 공개 경로가 없는지
    확인한다.
 
 ## 4. 배포와 검증
@@ -72,12 +72,14 @@ docker compose ps
 curl --fail http://127.0.0.1:8000/health
 ```
 
-- 로컬 `/admin`이 로그인으로 이동하고 올바른 계정만 통과하는지 확인한다.
+- 로컬 `/`가 로그인 화면으로 이동하고 올바른 계정만 통과하는지 확인한다.
+- 로그인 후에도 주소가 `/` 기준으로 유지되고 주소창에 `/admin`이 붙지 않는지 확인한다.
+  예전 `/admin` 경로는 하위 호환용으로 루트 경로로 이동만 시킨다.
 - 외부 URL에서 비허용 이메일은 Access에서 차단되고 허용 이메일만 앱
   로그인에 도달하는지 확인한다.
 - 잘못된 비밀번호 5회 후 5분 잠김되고, CSRF 토큰 없는 재시도와
   로그아웃이 403으로 거부되는지 확인한다.
-- 세션 쿠키에 `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/admin`이 있는지 확인한다.
+- 세션 쿠키에 `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`이 있는지 확인한다.
 - `sigongbot`과 `cloudflared`의 restart 정책이 `unless-stopped`인지, 상태와 로그가
   정상인지 확인한다. 토큰 값은 로그에 출력하지 않는다.
 - Slack 공지, 직접 작성, 질문형 회고, 제출 채널 게시와 이미지 첨부를 재검증한다.

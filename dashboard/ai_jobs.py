@@ -121,7 +121,7 @@ def _list_rows(data: dict, directory: dict) -> str:
             f"<td>{row['attempts']}회</td>"
             f"<td>{escape(to_kst(row['updated_at']))}<div class=\"sub\">{escape(since(row['updated_at']))}</div></td>"
             f'<td class="{note_class}">{escape(truncate(note, PREVIEW_LENGTH))}</td>'
-            f'<td><a href="/admin/ai-jobs/{row["id"]}">상세</a></td>'
+            f'<td><a href="/ai-jobs/{row["id"]}">상세</a></td>'
             "</tr>"
         )
     return rows(items, 7, "조건에 맞는 작업이 없습니다.")
@@ -154,7 +154,7 @@ async def handle_list(request: web.Request) -> web.Response:
     return web.Response(
         text=layout.render(
             title="AI 처리 큐",
-            active="/admin/ai-jobs",
+            active="/ai-jobs",
             heading="AI 처리 큐",
             subtitle="질문형 회고 이미지 정리 작업입니다. 실패한 작업은 상세에서 다시 시도할 수 있습니다.",
             body=body,
@@ -179,7 +179,7 @@ async def handle_detail(request: web.Request) -> web.Response:
     retry = ""
     if row["status"] == "failed":
         retry = (
-            f'<form method="post" action="/admin/ai-jobs/{row["id"]}/retry">'
+            f'<form method="post" action="/ai-jobs/{row["id"]}/retry">'
             f'<input type="hidden" name="csrf_token" value="{csrf_token(request)}">'
             '<button class="retry" type="submit">다시 시도</button></form>'
         )
@@ -195,7 +195,7 @@ async def handle_detail(request: web.Request) -> web.Response:
                 f'<div class="text">{escape(row[key])}</div></div>'
             )
     body = f"""
-<p><a href="/admin/ai-jobs">← 목록으로</a></p>
+<p><a href="/ai-jobs">← 목록으로</a></p>
 <table><tbody>
 <tr><th>ID</th><td>{row['id']}</td></tr>
 <tr><th>사용자</th><td>{slack_directory.user_cell(directory, row['user_id'])}</td></tr>
@@ -211,7 +211,7 @@ async def handle_detail(request: web.Request) -> web.Response:
     return web.Response(
         text=layout.render(
             title=f"AI 작업 #{row['id']}",
-            active="/admin/ai-jobs",
+            active="/ai-jobs",
             heading=f"AI 작업 #{row['id']}",
             subtitle=escape(row["status"]),
             body=body,
@@ -233,4 +233,4 @@ async def handle_retry(request: web.Request) -> web.Response:
         # 이미 처리 중이거나 완료된 작업은 건드리지 않는다.
         raise web.HTTPConflict(text="실패 상태인 작업만 다시 시도할 수 있습니다.")
     logger.info("관리자 웹에서 AI 작업을 재시도합니다 - job_id={}", job_id)
-    raise web.HTTPFound("/admin/ai-jobs?status=pending&retried=1")
+    raise web.HTTPFound("/ai-jobs?status=pending&retried=1")

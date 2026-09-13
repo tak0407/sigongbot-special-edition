@@ -114,7 +114,7 @@ def _list_rows(data: dict, directory: dict) -> str:
             f"<td>{slack_directory.channel_cell(directory, row['slack_channel'])}</td>"
             f"<td>{score if score is not None else '-'}</td>"
             f"<td>{escape(truncate(row['good_points'], PREVIEW_LENGTH))}</td>"
-            f'<td><a href="/admin/retrospectives/{row["id"]}">열기</a></td>'
+            f'<td><a href="/retrospectives/{row["id"]}">열기</a></td>'
             "</tr>"
         )
     return rows(items, 7, "조건에 맞는 회고가 없습니다.")
@@ -142,7 +142,7 @@ async def handle_list(request: web.Request) -> web.Response:
     return web.Response(
         text=layout.render(
             title="회고 열람",
-            active="/admin/retrospectives",
+            active="/retrospectives",
             heading="회고 열람",
             subtitle="제출 시각을 누르면 Slack 메시지로, 열기를 누르면 본문 전체로 이동합니다.",
             body=body,
@@ -177,7 +177,7 @@ async def handle_detail(request: web.Request) -> web.Response:
             f'{escape(row["emotion_reason"] or "")}</div></div>'
         )
     body = f"""
-<p><a href="/admin/retrospectives">← 목록으로</a></p>
+<p><a href="/retrospectives">← 목록으로</a></p>
 <table><tbody>
 <tr><th>ID</th><td>{row['id']}</td></tr>
 <tr><th>작성자</th><td>{slack_directory.user_cell(directory, row['user_id'])}</td></tr>
@@ -192,7 +192,7 @@ async def handle_detail(request: web.Request) -> web.Response:
     return web.Response(
         text=layout.render(
             title=f"회고 #{row['id']}",
-            active="/admin/retrospectives",
+            active="/retrospectives",
             heading=f"회고 #{row['id']}",
             subtitle=escape(row["session_name"]),
             body=body,
