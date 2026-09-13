@@ -26,7 +26,7 @@ async def main():
     app = web.Application()
     app.router.add_get("/", health_check)
     app.router.add_get("/health", health_check)
-    register_dashboard_routes(app)
+    register_dashboard_routes(app, slack_app.client)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", 8000)

@@ -6,6 +6,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from aiohttp import web
+from loguru import logger
 
 from config import settings
 from database.sqlite import get_connection
@@ -17,6 +18,83 @@ RECENT_LIMIT = 10
 FAILED_LIMIT = 10
 TREND_LIMIT = 8
 ERROR_PREVIEW_LENGTH = 160
+DIRECTORY_TTL = datetime.timedelta(minutes=10)
+USER_PAGE_LIMIT = 200
+USER_PAGE_MAX = 10
+
+# Slack 이름/링크 정보는 프로세스 안에서만 캐시한다. 페이지가 60초마다 자동
+# 새로고침되므로 매 요청마다 Slack API를 부르면 rate limit에 걸린다.
+_directory_cache: dict = {"expires_at": None, "value": None}
+
+SLACK_CLIENT = web.AppKey("slack_client")
+
+
+def _empty_directory() -> dict:
+    return {"url": "", "users": {}, "channels": {}}
+
+
+async def _load_directory(client) -> dict:
+    """Slack에서 워크스페이스 URL과 사용자/채널 이름표를 받아 온다."""
+    directory = _empty_directory()
+
+    try:
+        auth = await client.auth_test()
+        directory["url"] = str(auth["url"]).rstrip("/")
+    except Exception as error:
+        logger.warning("Slack auth.test 실패 - 대시보드 링크를 비활성화합니다 - {}", error)
+
+    # users:read 스코프가 없으면 여기서 실패한다. 이름 없이 ID로 표시하면 되므로
+    # 대시보드 전체를 실패시키지 않는다.
+    cursor = ""
+    for _ in range(USER_PAGE_MAX):
+        try:
+            page = await client.users_list(limit=USER_PAGE_LIMIT, cursor=cursor)
+        except Exception as error:
+            logger.warning("Slack users.list 실패 - 사용자는 ID로 표시합니다 - {}", error)
+            break
+        for member in page.get("members", []):
+            profile = member.get("profile") or {}
+            name = (
+                profile.get("display_name")
+                or profile.get("real_name")
+                or member.get("name")
+                or ""
+            ).strip()
+            if name:
+                directory["users"][member["id"]] = name
+        cursor = (page.get("response_metadata") or {}).get("next_cursor") or ""
+        if not cursor:
+            break
+
+    return directory
+
+
+async def _resolve_channels(client, directory: dict, channel_ids: set[str]) -> None:
+    """아직 이름을 모르는 채널만 조회해 캐시에 채운다."""
+    for channel_id in sorted(channel_ids - set(directory["channels"])):
+        try:
+            info = await client.conversations_info(channel=channel_id)
+            directory["channels"][channel_id] = info["channel"]["name"]
+        except Exception as error:
+            # 비공개 채널은 groups:read가 없으면 조회되지 않는다. ID로 표시한다.
+            logger.warning(
+                "Slack conversations.info 실패 - channel={} {}", channel_id, error
+            )
+
+
+async def _directory(client, channel_ids: set[str]) -> dict:
+    if client is None:
+        return _empty_directory()
+
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    expires_at = _directory_cache["expires_at"]
+    if _directory_cache["value"] is None or expires_at is None or now >= expires_at:
+        _directory_cache["value"] = await _load_directory(client)
+        _directory_cache["expires_at"] = now + DIRECTORY_TTL
+
+    directory = _directory_cache["value"]
+    await _resolve_channels(client, directory, channel_ids)
+    return directory
 
 
 def _authorized(request: web.Request) -> bool:
@@ -83,7 +161,7 @@ def _dashboard_data() -> dict:
         ).fetchone()[0]
         recent = connection.execute(
             """
-            SELECT user_id, session_name, created_at, slack_channel
+            SELECT user_id, session_name, created_at, slack_channel, slack_ts
               FROM retrospectives
              ORDER BY created_at DESC, id DESC
              LIMIT ?
@@ -142,12 +220,45 @@ h2{margin-top:36px}
 table{border-collapse:collapse;width:100%}
 th,td{padding:12px;text-align:left;border-bottom:1px solid #ddd;vertical-align:top}
 small{color:#667085}
-.mentions{font-family:ui-monospace,monospace;font-size:13px;color:#b42318;word-break:break-all}
+.mentions{font-family:ui-monospace,monospace;font-size:12px;color:#b42318;word-break:break-all;margin-top:4px}
+.sub{font-family:ui-monospace,monospace;font-size:11px;color:#98a2b3;margin-top:2px}
+a{color:#2b5ce6}
 .done{color:#087443}
 .bar{width:180px}
 .bar span{display:block;height:10px;border-radius:5px;background:#4c6ef5;min-width:2px}
 .error{font-family:ui-monospace,monospace;font-size:12px;color:#b42318;white-space:pre-wrap;word-break:break-all}
 """
+
+
+def _user_label(directory: dict, user_id: str) -> str:
+    """이름을 알면 이름을, 모르면 ID를 그대로 보여 준다."""
+    return directory["users"].get(user_id) or user_id
+
+
+def _user_cell(directory: dict, user_id: str) -> str:
+    name = directory["users"].get(user_id)
+    if not name:
+        return escape(user_id)
+    return f'{escape(name)}<div class="sub">{escape(user_id)}</div>'
+
+
+def _channel_cell(directory: dict, channel_id: str) -> str:
+    name = directory["channels"].get(channel_id)
+    label = f"#{name}" if name else channel_id
+    url = directory["url"]
+    if not url:
+        return escape(label)
+    href = f"{url}/archives/{channel_id}"
+    return f'<a href="{escape(href)}" target="_blank" rel="noopener">{escape(label)}</a>'
+
+
+def _message_cell(directory: dict, channel_id: str, slack_ts: str, label: str) -> str:
+    """제출 메시지로 바로 가는 Slack 딥링크를 만든다."""
+    url = directory["url"]
+    if not url or not slack_ts:
+        return escape(label)
+    href = f"{url}/archives/{channel_id}/p{slack_ts.replace('.', '')}"
+    return f'<a href="{escape(href)}" target="_blank" rel="noopener">{escape(label)}</a>'
 
 
 def _rows(rows: list[str], columns: int, empty: str) -> str:
@@ -157,16 +268,23 @@ def _rows(rows: list[str], columns: int, empty: str) -> str:
 
 
 def _team_rows(data: dict) -> str:
+    directory = data["directory"]
     rows = []
     for team in data["teams"]:
         if team["missing"]:
+            names = ", ".join(
+                _user_label(directory, user_id) for user_id in team["missing"]
+            )
             mentions = " ".join(f"<@{user_id}>" for user_id in team["missing"])
-            missing_cell = f'<span class="mentions">{escape(mentions)}</span>'
+            missing_cell = (
+                f"{escape(names)}"
+                f'<div class="mentions">{escape(mentions)}</div>'
+            )
         else:
             missing_cell = '<span class="done">전원 제출</span>'
         rows.append(
             "<tr>"
-            f"<td>{escape(team['channel'])}</td>"
+            f"<td>{_channel_cell(directory, team['channel'])}</td>"
             f"<td>{team['submitted']} / {team['members']}</td>"
             f"<td>{len(team['missing'])}</td>"
             f"<td>{missing_cell}</td>"
@@ -191,12 +309,13 @@ def _trend_rows(data: dict) -> str:
 
 
 def _recent_rows(data: dict) -> str:
+    directory = data["directory"]
     rows = [
         "<tr>"
-        f"<td>{escape(row['user_id'])}</td>"
+        f"<td>{_user_cell(directory, row['user_id'])}</td>"
         f"<td>{escape(row['session_name'])}</td>"
-        f"<td>{escape(_to_kst(row['created_at']))}</td>"
-        f"<td>{escape(row['slack_channel'])}</td>"
+        f"<td>{_message_cell(directory, row['slack_channel'], row['slack_ts'], _to_kst(row['created_at']))}</td>"
+        f"<td>{_channel_cell(directory, row['slack_channel'])}</td>"
         "</tr>"
         for row in data["recent"]
     ]
@@ -204,6 +323,7 @@ def _recent_rows(data: dict) -> str:
 
 
 def _failure_rows(data: dict) -> str:
+    directory = data["directory"]
     rows = []
     for row in data["failures"]:
         message = (row["last_error"] or "기록된 오류 메시지가 없습니다.").strip()
@@ -211,7 +331,7 @@ def _failure_rows(data: dict) -> str:
             message = message[:ERROR_PREVIEW_LENGTH] + "…"
         rows.append(
             "<tr>"
-            f"<td>{escape(row['user_id'])}</td>"
+            f"<td>{_user_cell(directory, row['user_id'])}</td>"
             f"<td>{escape(_to_kst(row['updated_at']))}</td>"
             f"<td>{row['attempts']}회</td>"
             f'<td class="error">{escape(message)}</td>'
@@ -248,8 +368,13 @@ async def admin_dashboard(request: web.Request) -> web.Response:
     if not _authorized(request):
         raise web.HTTPUnauthorized(headers={"WWW-Authenticate": 'Basic realm="sigongbot-admin"'})
     data = await asyncio.to_thread(_dashboard_data)
+    channel_ids = {team["channel"] for team in data["teams"]}
+    channel_ids.update(row["slack_channel"] for row in data["recent"])
+    data["directory"] = await _directory(request.app.get(SLACK_CLIENT), channel_ids)
     return web.Response(text=_page(data), content_type="text/html")
 
 
-def register_dashboard_routes(app: web.Application) -> None:
+def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
+    """slack_client를 넘기지 않으면 사용자/채널을 ID 그대로 표시한다."""
+    app[SLACK_CLIENT] = slack_client
     app.router.add_get("/admin", admin_dashboard)
