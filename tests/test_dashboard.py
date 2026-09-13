@@ -42,6 +42,12 @@ class DashboardTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1 / 2", body)
         self.assertIn("미제출 1명", body)
 
+    async def test_dashboard_allows_local_access_without_password(self):
+        with patch.object(settings, "DASHBOARD_PASSWORD", ""):
+            response = await self.client.get("/admin")
+        self.assertEqual(response.status, 200)
+        self.assertIn("1 / 2", await response.text())
+
 
 if __name__ == "__main__":
     unittest.main()

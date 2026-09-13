@@ -12,8 +12,10 @@ from utils import format_remaining_time, get_current_session_info
 
 def _authorized(request: web.Request) -> bool:
     password = settings.DASHBOARD_PASSWORD
+    if not password:
+        return True
     header = request.headers.get("Authorization", "")
-    if not password or not header.startswith("Basic "):
+    if not header.startswith("Basic "):
         return False
     try:
         username, supplied = base64.b64decode(header[6:]).decode().split(":", 1)
