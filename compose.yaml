@@ -11,6 +11,8 @@ services:
     volumes:
       - temp-data:/app/temp
       - database-data:/app/data
+      - antigravity-data:/home/appuser/.gemini
+      - antigravity-keyring:/home/appuser/.local/share/keyrings
     healthcheck:
       test:
         - CMD
@@ -30,3 +32,5 @@ services:
 volumes:
   temp-data:
   database-data:
+  antigravity-data:
+  antigravity-keyring:

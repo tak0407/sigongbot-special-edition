@@ -13,7 +13,7 @@ from utils import save_temp_retrospective, cleanup_temp_files
 
 
 def _get_submission_channel(
-    *, user_id: str, session_name: str
+    *, user_id: str, session_name: str, requested_channel: str = ""
 ) -> str:
     test_mode = session_name == "테스트 회차" or (
         bool(settings.SESSION_NAME_OVERRIDE)
@@ -21,6 +21,11 @@ def _get_submission_channel(
     )
     if test_mode and settings.TEST_SUBMISSION_CHANNEL:
         return settings.TEST_SUBMISSION_CHANNEL
+    if (
+        user_id in settings.SUBMISSION_CHANNEL_CHOOSER_IDS
+        and requested_channel in settings.SUBMISSION_DESTINATIONS.values()
+    ):
+        return requested_channel
     return settings.SUBMISSION_DESTINATIONS.get(user_id, "")
 
 
@@ -89,7 +94,9 @@ async def handle_view_retrospective_submit(
             return
 
         original_channel_id = _get_submission_channel(
-            user_id=user_id, session_name=session_name
+            user_id=user_id,
+            session_name=session_name,
+            requested_channel=metadata.get("channel_id", ""),
         )
         if not original_channel_id:
             await ack(

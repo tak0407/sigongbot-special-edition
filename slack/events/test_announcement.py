@@ -41,7 +41,9 @@ RETROSPECTIVE_METHODS = [
 ]
 
 
-def build_method_selection_view(metadata: dict) -> dict:
+def build_method_selection_view(
+    metadata: dict, channel_options: list[dict] | None = None
+) -> dict:
     options = [
         {
             "text": {"type": "plain_text", "text": method["title"]},
@@ -50,6 +52,33 @@ def build_method_selection_view(metadata: dict) -> dict:
         }
         for method in RETROSPECTIVE_METHODS
     ]
+    blocks = [
+        {
+            "type": "input",
+            "block_id": "retrospective_method",
+            "label": {"type": "plain_text", "text": "회고 방식을 선택해 주세요"},
+            "element": {
+                "type": "radio_buttons",
+                "action_id": "method_input",
+                "options": options,
+                "initial_option": options[0],
+            },
+        }
+    ]
+    if channel_options:
+        blocks.append(
+            {
+                "type": "input",
+                "block_id": "submission_channel",
+                "label": {"type": "plain_text", "text": "회고를 공유할 팀 채널"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "channel_input",
+                    "placeholder": {"type": "plain_text", "text": "팀 채널 선택"},
+                    "options": channel_options,
+                },
+            }
+        )
     return {
         "type": "modal",
         "callback_id": "select_retrospective_method",
@@ -57,19 +86,7 @@ def build_method_selection_view(metadata: dict) -> dict:
         "submit": {"type": "plain_text", "text": "시작하기"},
         "close": {"type": "plain_text", "text": "취소"},
         "private_metadata": json.dumps(metadata, ensure_ascii=False),
-        "blocks": [
-            {
-                "type": "input",
-                "block_id": "retrospective_method",
-                "label": {"type": "plain_text", "text": "회고 방식을 선택해 주세요"},
-                "element": {
-                    "type": "radio_buttons",
-                    "action_id": "method_input",
-                    "options": options,
-                    "initial_option": options[0],
-                },
-            }
-        ],
+        "blocks": blocks,
     }
 
 
@@ -228,11 +245,12 @@ def _announcement_blocks(channel_id: str) -> list[dict]:
         {
             "type": "section",
             "text": {
-                "type": "mrkdwn",
-                "text": (
+                    "type": "mrkdwn",
+                    "text": (
+                    "<!here>\n\n"
                     "*6기 1회차 회고를 제출해 주세요* 🌱\n"
                     "이번 기수부터 회고를 더 편하게 남길 수 있도록 제출 방식을 바꿨어요.\n"
-                    "아래 버튼에서 회고를 작성하면 이 채널에 자동으로 공유됩니다.\n\n"
+                    "아래 버튼에서 회고를 작성하면 본인이 속한 팀 채널에 자동으로 공유됩니다.\n\n"
                     "6기의 첫 회고인 만큼, 이번 주를 살아낸 나에게 다음 한 주를 위한 작은 힌트를 남겨주세요."
                 ),
             },
@@ -260,42 +278,48 @@ def _team_channels() -> dict[str, set[str]]:
 
 
 async def post_sixth_first_announcement(client: AsyncWebClient) -> None:
-    for channel_id in _team_channels():
-        key = f"6-1-announcement:{channel_id}"
-        if await announcement_sent(key):
-            continue
-        await client.chat_postMessage(
-            channel=channel_id,
-            text="6기 1회차 회고를 제출해 주세요.",
-            blocks=_announcement_blocks(channel_id),
-        )
-        await mark_announcement_sent(key)
+    channel_id = settings.ANNOUNCEMENT_CHANNEL
+    if not channel_id:
+        logger.warning("ANNOUNCEMENT_CHANNEL이 비어 있어 첫 공지를 발송하지 않습니다.")
+        return
+    key = f"6-1-announcement:{channel_id}"
+    if await announcement_sent(key):
+        return
+    await client.chat_postMessage(
+        channel=channel_id,
+        text="<!here> 6기 1회차 회고를 제출해 주세요.",
+        blocks=_announcement_blocks(channel_id),
+    )
+    await mark_announcement_sent(key)
 
 
 async def post_sixth_first_reminder(client: AsyncWebClient) -> None:
     submitted = await get_submitted_user_ids(SIXTH_FIRST_SESSION_NAME)
-    for channel_id, members in _team_channels().items():
-        key = f"6-1-reminder:{channel_id}"
-        if members <= submitted or await announcement_sent(key):
-            continue
-        await client.chat_postMessage(
-            channel=channel_id,
-            text="6기 1회차 회고 마감까지 약 하루 남았어요.",
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": (
-                            "*6기 1회차 회고 마감까지 약 하루 남았어요* ⏰\n"
-                            "아직 회고를 남기지 않았다면 위 공지의 `회고 제출하기` 버튼에서 작성해 주세요.\n"
-                            "마감은 화요일 오전 5시입니다."
-                        ),
-                    },
-                }
-            ],
-        )
-        await mark_announcement_sent(key)
+    members = set(settings.SUBMISSION_DESTINATIONS)
+    channel_id = settings.ANNOUNCEMENT_CHANNEL
+    if not channel_id or not members or members <= submitted:
+        return
+    key = f"6-1-reminder:{channel_id}"
+    if await announcement_sent(key):
+        return
+    await client.chat_postMessage(
+        channel=channel_id,
+        text="6기 1회차 회고 마감까지 약 하루 남았어요.",
+        blocks=[
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        "*6기 1회차 회고 마감까지 약 하루 남았어요* ⏰\n"
+                        "아직 회고를 남기지 않았다면 위 공지의 `회고 제출하기` 버튼에서 작성해 주세요.\n"
+                        "마감은 화요일 오전 5시입니다."
+                    ),
+                },
+            }
+        ],
+    )
+    await mark_announcement_sent(key)
 
 
 async def run_sixth_first_announcement_scheduler(client: AsyncWebClient) -> None:
@@ -317,9 +341,23 @@ async def handle_start_from_announcement(
 ) -> None:
     await ack()
     metadata = json.loads(body["actions"][0]["value"])
+    channel_options = None
+    if body["user"]["id"] in settings.SUBMISSION_CHANNEL_CHOOSER_IDS:
+        channel_options = []
+        for channel_id in _team_channels():
+            response = await client.conversations_info(channel=channel_id)
+            channel_options.append(
+                {
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"#{response['channel']['name']}",
+                    },
+                    "value": channel_id,
+                }
+            )
     await client.views_open(
         trigger_id=body["trigger_id"],
-        view=build_method_selection_view(metadata),
+        view=build_method_selection_view(metadata, channel_options),
     )
 
 
@@ -333,9 +371,18 @@ async def handle_method_select(
         method = metadata.pop("method")
     else:
         metadata = json.loads(body["view"]["private_metadata"])
-        method = body["view"]["state"]["values"]["retrospective_method"][
+        values = body["view"]["state"]["values"]
+        method = values["retrospective_method"][
             "method_input"
         ]["selected_option"]["value"]
+        if body["user"]["id"] in settings.SUBMISSION_CHANNEL_CHOOSER_IDS:
+            selected = values.get("submission_channel", {}).get(
+                "channel_input", {}
+            ).get("selected_option")
+            channel_id = selected.get("value") if selected else ""
+            if channel_id not in _team_channels():
+                raise ValueError("공유할 팀 채널을 다시 선택해 주세요.")
+            metadata["channel_id"] = channel_id
     if method not in {"direct", "guided"}:
         raise ValueError("회고 방식을 다시 선택해 주세요.")
     if method == "guided":

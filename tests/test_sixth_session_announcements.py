@@ -33,17 +33,17 @@ class SixthSessionAnnouncementTest(unittest.IsolatedAsyncioTestCase):
                 {"U11111111": "C11111111", "U22222222": "C22222222"},
             )
         )
+        self.enterContext(patch.object(settings, "ANNOUNCEMENT_CHANNEL", "C99999999"))
         initialize_database()
         self.client = SimpleNamespace(chat_postMessage=AsyncMock())
 
-    async def test_announcement_posts_once_per_team_channel(self):
+    async def test_announcement_posts_once_in_announcement_channel(self):
         await post_sixth_first_announcement(self.client)
         await post_sixth_first_announcement(self.client)
-        self.assertEqual(self.client.chat_postMessage.await_count, 2)
-        self.assertEqual(
-            {call.kwargs["channel"] for call in self.client.chat_postMessage.await_args_list},
-            {"C11111111", "C22222222"},
-        )
+        self.client.chat_postMessage.assert_awaited_once()
+        message = self.client.chat_postMessage.await_args.kwargs
+        self.assertEqual(message["channel"], "C99999999")
+        self.assertIn("<!here>", message["blocks"][0]["text"]["text"])
 
     async def test_reminder_skips_completed_team_channel(self):
         await create_retrospective(
@@ -58,7 +58,7 @@ class SixthSessionAnnouncementTest(unittest.IsolatedAsyncioTestCase):
         )
         await post_sixth_first_reminder(self.client)
         self.client.chat_postMessage.assert_awaited_once()
-        self.assertEqual(self.client.chat_postMessage.await_args.kwargs["channel"], "C22222222")
+        self.assertEqual(self.client.chat_postMessage.await_args.kwargs["channel"], "C99999999")
 
 
 class SixthSessionScheduleTest(unittest.TestCase):

@@ -110,6 +110,36 @@ class SubmissionRoutingTest(unittest.IsolatedAsyncioTestCase):
             await self.submit("U00000001", session="운영 1회차")
             self.assertEqual(self.client.chat_postMessage.await_args.kwargs["channel"], "C11111111")
 
+    async def test_authorized_chooser_can_select_team_channel(self):
+        with patch.object(settings, "SUBMISSION_CHANNEL_CHOOSER_IDS", ["U00000001"]):
+            view = build_retrospective_view(
+                channel_id="C33333333",
+                session_name="운영 1회차",
+                test_mode=False,
+            )
+            view["state"] = {"values": {
+                field: {field + "_input": {"value": "작성한 회고"}}
+                for field in ("good_points", "improvements", "learnings", "action_item")
+            }}
+            view["state"]["values"]["calendar_image"] = {
+                "calendar_image_input": {"files": []}
+            }
+            await submission.handle_view_retrospective_submit(
+                AsyncMock(), {"user": {"id": "U00000001"}, "view": view}, self.client, view
+            )
+        self.assertEqual(self.client.chat_postMessage.await_args.kwargs["channel"], "C33333333")
+
+    def test_channel_chooser_view_lists_team_channels(self):
+        options = [
+            {"text": {"type": "plain_text", "text": "#blue-team"}, "value": "C11111111"},
+            {"text": {"type": "plain_text", "text": "#green-team"}, "value": "C22222222"},
+        ]
+        view = announcement.build_method_selection_view(
+            {"channel_id": "C99999999", "session_name": "운영 1회차"}, options
+        )
+        channel_block = next(block for block in view["blocks"] if block["block_id"] == "submission_channel")
+        self.assertEqual(channel_block["element"]["options"], options)
+
     async def test_announcement_has_one_button_in_source_channel(self):
         await announcement.handle_post_test_announcement(
             AsyncMock(), {"user": {"id": "U00000001"}, "view": {"private_metadata": "C99999999"}}, self.client

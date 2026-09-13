@@ -3,6 +3,7 @@ from aiohttp import web
 from loguru import logger
 from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from config import settings
+from ai_review.antigravity import validate_antigravity_runtime
 from dashboard import register_dashboard_routes
 from database.sqlite import initialize_database
 from slack.event_handler import app as slack_app
@@ -14,6 +15,12 @@ async def health_check(request):
 
 async def main():
     initialize_database()
+
+    try:
+        executable = validate_antigravity_runtime()
+        logger.info("질문형 회고 AI CLI 준비 완료 - executable={}", executable)
+    except RuntimeError as error:
+        logger.warning("질문형 회고 AI 런타임을 사용할 수 없습니다 - {}", error)
 
     # HTTP 서버 설정
     app = web.Application()

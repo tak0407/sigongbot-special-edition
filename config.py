@@ -54,8 +54,14 @@ class Settings:
         self.TEST_SUBMISSION_CHANNEL: str = os.getenv(
             "TEST_SUBMISSION_CHANNEL", ""
         ).strip()
+        self.ANNOUNCEMENT_CHANNEL: str = os.getenv(
+            "ANNOUNCEMENT_CHANNEL", ""
+        ).strip()
         self.SUBMISSION_DESTINATIONS: dict[str, str] = parse_submission_teams(
             os.getenv("SUBMISSION_TEAMS", "")
+        )
+        self.SUBMISSION_CHANNEL_CHOOSER_IDS: list[str] = parse_admin_ids(
+            os.getenv("SUBMISSION_CHANNEL_CHOOSER_IDS", "")
         )
 
         self.SLACK_BOT_TOKEN: str = os.getenv("SLACK_BOT_TOKEN", "")

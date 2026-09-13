@@ -74,24 +74,28 @@ chmod 600 .env
 git check-ignore -v .env
 ```
 
-## 4. AI 런타임 결정 게이트
+## 4. AI 런타임 설정
 
-현재 Dockerfile은 Antigravity CLI를 설치하지 않는다. 아래 중 하나가 검증되기 전에는 AI 기능 배포 완료로 보고하지 않는다.
+Dockerfile은 공식 설치 스크립트로 Antigravity CLI(`agy`)와 컨테이너 전용 D-Bus·GNOME Keyring을 이미지에 설치한다. 별도 Gemini API 키는 사용하지 않는다. OAuth 인증정보는 `antigravity-keyring` Docker 볼륨에 저장하며 운영 SQLite 볼륨과 마찬가지로 삭제하지 않는다.
 
-1. 컨테이너 이미지에 `agy`를 설치하고 인증정보를 안전한 읽기 전용 볼륨으로 제공한다.
-2. 봇을 Docker 밖의 제한된 systemd 서비스로 실행해 호스트의 인증된 `agy`를 사용한다.
-3. 별도 API 기반 AI 처리기로 교체한다.
+최초 배포 후 다음 명령으로 `agy`를 한 번 실행한다.
 
-어떤 방식이든 다음을 검증한다.
+```bash
+docker compose exec sigongbot agy
+```
+
+표시되는 URL에서 Google 계정으로 로그인하고 인증 코드를 터미널에 붙여 넣는다. 로그인 확인 후 `Ctrl+C`로 종료하고 `docker compose exec sigongbot agy models`가 모델 목록을 출력하는지 확인한 다음 컨테이너를 재시작한다.
+
+다음을 검증한다.
 
 - `agy` 실행 파일 탐색 성공
-- 비대화형 인증 유지
+- 시작 로그의 `질문형 회고 AI CLI 준비 완료`
+- Google 계정 OAuth를 사용한 비대화형 인증 유지
 - `--sandbox --mode plan` 적용
 - 텍스트 구조화 출력 성공
-- 실제 테스트 이미지 판독 성공
 - 재부팅 후 인증과 실행 유지
 
-AI 런타임이 준비되지 않았으면 일반 회고 기능만 먼저 배포할 수 있지만, 질문형 회고는 기본 매핑으로 대체됨을 사용자에게 명확히 알린다. 이미지 AI 리뷰는 생성하지 않는다.
+AI 런타임이 준비되지 않았으면 일반 회고 기능은 계속 동작하지만 질문형 회고는 기본 매핑으로 대체된다. 시간 기록 이미지는 분석하지 않고 회고와 함께 게시한다.
 
 ## 5. 전환 전 정적 검증
 
