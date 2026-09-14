@@ -1,9 +1,12 @@
+import asyncio
+import datetime
 import json
 import re
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -12,6 +15,7 @@ from config import settings
 from dashboard import register_dashboard_routes
 from dashboard import auth
 from dashboard import directory as slack_directory
+from dashboard import members
 from database.sqlite import get_connection, initialize_database
 
 
@@ -421,3 +425,83 @@ class AdminAuthenticationTest(AdminWebTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MembersTabTest(AdminWebTestCase):
+    """멤버 탭: 마감된 회차만 분모로 삼고 연속 미제출을 센다."""
+
+    def _patch_sessions(self):
+        """6기 1·2회차는 마감, 3회차는 진행 중인 상태를 만든다."""
+        seoul = ZoneInfo("Asia/Seoul")
+        names = ["5기 12회차", "6기 1회차", "6기 2회차", "6기 3회차"]
+        dues = [
+            datetime.datetime(2026, 9, 1, 5, 0, tzinfo=seoul),
+            datetime.datetime(2026, 9, 8, 5, 0, tzinfo=seoul),
+            datetime.datetime(2026, 9, 11, 5, 0, tzinfo=seoul),
+            datetime.datetime(2026, 12, 31, 5, 0, tzinfo=seoul),
+        ]
+        self.enterContext(patch.object(members, "SESSION_NAMES", names))
+        self.enterContext(patch.object(members, "DUE_DATES", dues))
+
+    async def test_counts_streak_and_rate_over_finished_sessions(self):
+        self._patch_sessions()
+        # U11111111은 기본 픽스처에서 6기 1회차만 냈으므로 2회차를 빠뜨려 1회 연속 미제출이다.
+        body = await (await self._get("/members")).text()
+        self.assertIn("1 / 2", body)
+        self.assertIn("2회 연속", body)  # U22222222는 두 회차 모두 미제출
+        self.assertIn("이탈 위험", body)
+
+    async def test_excludes_other_cohorts_and_test_submissions(self):
+        self._patch_sessions()
+        with get_connection() as connection:
+            # 테스트 제출은 참여 이력에 잡히면 안 된다.
+            connection.execute(
+                """INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item, is_test_submission) VALUES ('U22222222', '6기 2회차', 'C11111111', '9.0', '좋음', '개선', '학습', '실행', 1)"""
+            )
+        data = await asyncio.to_thread(members._collect)
+        by_id = {member["user_id"]: member for member in data["members"]}
+        self.assertEqual(by_id["U22222222"]["done"], 0)
+        self.assertEqual(by_id["U22222222"]["streak"], 2)
+        # 5기 제출뿐인 U33333333은 6기 분모에서 0/2이고 팀 미배정으로 잡힌다.
+        self.assertEqual(by_id["U33333333"]["channel"], "")
+        self.assertEqual(by_id["U33333333"]["done"], 0)
+        # 분모는 마감된 6기 회차 2개뿐이다. 진행 중인 3회차는 빠진다.
+        self.assertEqual(data["sessions"], ["6기 1회차", "6기 2회차"])
+
+    async def test_survives_when_no_session_has_closed_yet(self):
+        """6기 1회차 마감 전처럼 분모가 0인 시점에도 화면이 떠야 한다."""
+        seoul = ZoneInfo("Asia/Seoul")
+        self.enterContext(patch.object(members, "SESSION_NAMES", ["6기 1회차"]))
+        self.enterContext(
+            patch.object(
+                members,
+                "DUE_DATES",
+                [datetime.datetime(2026, 12, 31, 5, 0, tzinfo=seoul)],
+            )
+        )
+        response = await self._get("/members")
+        self.assertEqual(response.status, 200)
+        body = await response.text()
+        self.assertIn("마감된 회차가 아직 없습니다", body)
+
+    async def test_requires_session(self):
+        response = await self.client.get("/members", allow_redirects=False)
+        self.assertEqual(response.status, 302)
+
+    async def test_last_submission_points_at_the_newest_session(self):
+        """created_at이 같아도 마지막 제출이 최신 회차를 가리켜야 한다."""
+        self._patch_sessions()
+        with get_connection() as connection:
+            # 기본 픽스처의 6기 1회차와 같은 시각으로 2회차를 넣어 동점을 만든다.
+            stamp = connection.execute(
+                "SELECT created_at FROM retrospectives WHERE user_id = 'U11111111'"
+            ).fetchone()["created_at"]
+            connection.execute(
+                """INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item, created_at) VALUES ('U11111111', '6기 2회차', 'C11111111', '8.0', '좋음', '개선', '학습', '실행', ?)""",
+                (stamp,),
+            )
+        data = await asyncio.to_thread(members._collect)
+        by_id = {member["user_id"]: member for member in data["members"]}
+        # 같은 시각이면 나중에 들어온 행(= 더 큰 id)이 마지막 제출이다.
+        self.assertEqual(by_id["U11111111"]["last_session"], "6기 2회차")
+        self.assertEqual(by_id["U11111111"]["streak"], 0)
