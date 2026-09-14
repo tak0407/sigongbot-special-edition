@@ -24,6 +24,8 @@ COOKIE_PATH = "/"
 LOGIN_PATH = "/login"
 LEGACY_PREFIX = "/admin"
 LOGIN_CSRF_COOKIE = "sigongbot_login_csrf"
+# 로그인 화면을 열어 둔 채 자리를 비워도 한 번은 제출할 수 있게 넉넉히 잡는다.
+LOGIN_CSRF_MINUTES = 30
 AUTH_CONTEXT = web.AppKey("admin_auth_context", object)
 PASSWORD_N = 2**14
 PASSWORD_R = 8
@@ -294,44 +296,60 @@ button{{width:100%;margin-top:22px;padding:10px;border:0;border-radius:8px;backg
 <button type="submit">로그인</button></form></main></body></html>"""
 
 
-async def handle_login_form(request: web.Request) -> web.Response:
-    if await asyncio.to_thread(_load_session, request.cookies.get(SESSION_COOKIE, "")):
-        raise web.HTTPFound(safe_internal_path(request.query.get("next", "/")))
+def _login_response(*, next_path: str, error: str = "", status: int = 200) -> web.Response:
+    """로그인 화면을 새 CSRF 논스와 함께 내려준다."""
     nonce = secrets.token_urlsafe(24)
     try:
         csrf = _csrf_token("login:" + nonce)
-    except RuntimeError as error:
-        raise web.HTTPServiceUnavailable(text=str(error))
+    except RuntimeError as error_detail:
+        raise web.HTTPServiceUnavailable(text=str(error_detail))
     response = web.Response(
-        text=_login_page(csrf=csrf, next_path=safe_internal_path(request.query.get("next", "/"))),
+        text=_login_page(csrf=csrf, next_path=next_path, error=error),
+        status=status,
         content_type="text/html",
     )
-    _set_secure_cookie(response, LOGIN_CSRF_COOKIE, nonce, max_age=600)
+    # 중간 캐시가 남의 논스가 담긴 화면을 돌려주지 않게 막는다.
+    response.headers["Cache-Control"] = "no-store"
+    _set_secure_cookie(response, LOGIN_CSRF_COOKIE, nonce, max_age=LOGIN_CSRF_MINUTES * 60)
     return response
+
+
+async def handle_login_form(request: web.Request) -> web.Response:
+    if await asyncio.to_thread(_load_session, request.cookies.get(SESSION_COOKIE, "")):
+        raise web.HTTPFound(safe_internal_path(request.query.get("next", "/")))
+    return _login_response(next_path=safe_internal_path(request.query.get("next", "/")))
 
 
 async def handle_login(request: web.Request) -> web.Response:
     form = await request.post()
     nonce = request.cookies.get(LOGIN_CSRF_COOKIE, "")
     supplied_csrf = str(form.get("csrf_token", ""))
+    next_path = safe_internal_path(str(form.get("next", "/")))
     try:
         expected_csrf = _csrf_token("login:" + nonce) if nonce else ""
     except RuntimeError as error:
         raise web.HTTPServiceUnavailable(text=str(error))
     if not expected_csrf or not hmac.compare_digest(supplied_csrf, expected_csrf):
-        raise web.HTTPForbidden(text="CSRF 검증에 실패했습니다.")
+        logger.warning(
+            "관리자 로그인 CSRF 검증 실패: 논스 쿠키 {}. 새 로그인 화면을 내려보냅니다.",
+            "없음" if not nonce else "불일치",
+        )
+        # 거절은 하되 새 논스를 담은 화면을 함께 돌려줘 곧바로 다시 시도할 수 있게 한다.
+        return _login_response(
+            next_path=next_path,
+            error="로그인 화면이 만료되었습니다. 다시 입력해 주세요.",
+            status=403,
+        )
 
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
     status, admin_user_id = await asyncio.to_thread(_authenticate_login, username, password)
-    next_path = safe_internal_path(str(form.get("next", "/")))
     if status != "ok" or admin_user_id is None:
         error = (f"로그인 시도가 잠겼습니다. {LOCK_MINUTES}분 후 다시 시도하세요."
                  if status == "locked" else "계정명 또는 비밀번호가 올바르지 않습니다.")
-        return web.Response(
-            text=_login_page(csrf=expected_csrf, next_path=next_path, error=error),
-            status=429 if status == "locked" else 401,
-            content_type="text/html",
+        # 실패 화면에서도 논스를 새로 발급해 만료 시계를 다시 돌린다.
+        return _login_response(
+            next_path=next_path, error=error, status=429 if status == "locked" else 401
         )
 
     token = await asyncio.to_thread(_create_session, admin_user_id)
@@ -353,7 +371,15 @@ def require_admin(handler):
             form = await request.post()
             supplied = str(form.get("csrf_token", ""))
             if not supplied or not hmac.compare_digest(supplied, csrf_token(request)):
-                raise web.HTTPForbidden(text="CSRF 검증에 실패했습니다.")
+                logger.warning(
+                    "관리자 요청 CSRF 검증 실패: {} {} (계정 {}).",
+                    request.method,
+                    request.path,
+                    context.username,
+                )
+                raise web.HTTPForbidden(
+                    text="CSRF 검증에 실패했습니다. 화면을 새로고침한 뒤 다시 시도하세요."
+                )
         return await handler(request)
 
     return wrapped
