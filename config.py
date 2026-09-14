@@ -159,6 +159,7 @@ class Settings:
         self.DASHBOARD_SESSION_SECRET: str = os.getenv(
             "DASHBOARD_SESSION_SECRET", ""
         ).strip()
+        self.ALERT_WEBHOOK_URL: str = os.getenv("ALERT_WEBHOOK_URL", "").strip()
         self.DASHBOARD_SESSION_HOURS: int = int(
             os.getenv("DASHBOARD_SESSION_HOURS", "12")
         )

@@ -10,6 +10,7 @@ from slack_bolt.response import BoltResponse
 from slack_sdk.models.blocks import SectionBlock
 from slack_sdk.models.views import View
 
+from alerts import build_alert, send_alert
 from exception import BotException
 from slack.events.channel_created import handle_channel_created
 from slack.events.member_joined_channel import handle_member_joined_channel
@@ -82,14 +83,41 @@ async def log_event_middleware(
 @app.error
 async def handle_error(error, body):
     """이벤트 핸들러에서 발생한 에러 처리"""
-    logger.error(f'"{str(error)}"')
+    body = body or {}
+    # 아래에서 더 자세한 알림을 직접 보내므로 로그 싱크가 중복으로 알리지 않게 한다.
+    logger.bind(alert=False).error(f'"{str(error)}"')
     trace = traceback.format_exc()
-    logger.debug(
+    logger.bind(alert=False).debug(
         "Slack 처리 오류 - type={}, command={}, callback_id={}, error={}",
         body.get("type"),
         body.get("command"),
         body.get("view", {}).get("callback_id"),
         trace,
+    )
+
+    # 알림 워크스페이스 전송을 가장 먼저 시도합니다.
+    # 봇 워크스페이스의 Slack 호출이 실패해도 오류가 묻히지 않아야 합니다.
+    await send_alert(
+        build_alert(
+            "Slack 이벤트 처리 오류",
+            {
+                "종류": body.get("type"),
+                "명령": body.get("command"),
+                "콜백": (body.get("view") or {}).get("callback_id"),
+                "액션": ",".join(
+                    action.get("action_id", "")
+                    for action in body.get("actions", [])
+                    if action
+                ),
+                "사용자": (body.get("user") or {}).get("id"),
+            },
+            error=error,
+            detail=trace,
+        ),
+        dedup_key=(
+            f"slack-event:{type(error).__name__}:{body.get('type')}"
+            f":{body.get('command')}"
+        ),
     )
 
     # 사용자에게 에러를 알립니다.
@@ -100,26 +128,33 @@ async def handle_error(error, body):
         message = "예기치 못한 오류가 발생했어요."
 
     text = f"🥲 {message}\n\n👉🏼 문제가 해결되지 않는다면 <#{settings.SUPPORT_CHANNEL}> 채널로 문의해주세요."
-    if trigger_id := body.get("trigger_id"):
-        await app.client.views_open(
-            trigger_id=trigger_id,
-            view=View(
-                type="modal",
-                title={"type": "plain_text", "text": "잠깐!"},
-                blocks=[SectionBlock(text=text)],
-            ),
+    try:
+        if trigger_id := body.get("trigger_id"):
+            await app.client.views_open(
+                trigger_id=trigger_id,
+                view=View(
+                    type="modal",
+                    title={"type": "plain_text", "text": "잠깐!"},
+                    blocks=[SectionBlock(text=text)],
+                ),
+            )
+    except Exception as notify_error:
+        # trigger_id는 3초 만에 만료되므로 안내 실패로 관리자 알림까지 막지 않는다.
+        logger.bind(alert=False).warning(
+            "사용자에게 오류 안내를 전달하지 못했습니다 - {}", notify_error
         )
 
     # 관리자에게 에러를 알립니다.
-    if isinstance(error, BotException):
+    prefix = "🫢" if isinstance(error, BotException) else "⛈️ 핸들링이 필요한 에러입니다. 🫢"
+    try:
         await app.client.chat_postMessage(
             channel=settings.ADMIN_CHANNEL,
-            text=f"🫢: {error=} 🕊️: {trace=}",
+            # Slack 메시지 길이 제한(4000자)에 걸리면 이 호출 자체가 실패한다.
+            text=f"{prefix}: {error=} 🕊️: {trace=}"[:3500],
         )
-    else:
-        await app.client.chat_postMessage(
-            channel=settings.ADMIN_CHANNEL,
-            text=f"⛈️ 핸들링이 필요한 에러입니다. 🫢: {error=} 🕊️: {trace=}",
+    except Exception as admin_error:
+        logger.bind(alert=False).warning(
+            "관리자 채널에 오류를 알리지 못했습니다 - {}", admin_error
         )
 
 
