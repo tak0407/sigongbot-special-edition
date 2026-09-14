@@ -30,5 +30,10 @@ def initialize_database(*, recover_processing_jobs: bool = True) -> None:
                 """
             )
 
+    # 마이그레이션이 일정을 시드하거나 바꿀 수 있으므로 읽기 캐시를 비운다.
+    from database.sessions import invalidate
+
+    invalidate()
+
     os.chmod(database_path.parent, 0o700)
     os.chmod(database_path, 0o600)
