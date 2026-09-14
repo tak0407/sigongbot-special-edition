@@ -21,7 +21,6 @@ try:
 
     from background import supervise
     from config import settings
-    from ai_review import run_ai_review_worker
     from ai_review.antigravity import validate_antigravity_runtime
     from dashboard import register_dashboard_routes
     from dashboard.auth import validate_dashboard_security
@@ -79,10 +78,11 @@ async def main():
         app_token=settings.SLACK_APP_TOKEN,
     )
 
+    # 이미지 AI 리뷰 작업자는 a8bad42에서 의도적으로 내렸다. 품질 개선 전까지
+    # 기동하지 않는다. 되살리려면 ai_review/worker.py와 enqueue_ai_review 호출을
+    # 함께 복구해야 한다.
+
     # 작업이 죽으면 봇은 살아 있는 채로 기능만 멈추므로 supervise로 감싼다.
-    worker_task = asyncio.create_task(
-        supervise("AI 리뷰 작업자", lambda: run_ai_review_worker(slack_app.client))
-    )
     announcement_task = asyncio.create_task(
         supervise(
             "회차 공지 스케줄러",
@@ -108,8 +108,7 @@ async def main():
         logger.info("Slack Socket Mode started")
 
     finally:
-        tasks = [worker_task]
-        worker_task.cancel()
+        tasks = []
         if announcement_task:
             announcement_task.cancel()
             tasks.append(announcement_task)
