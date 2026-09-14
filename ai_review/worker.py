@@ -7,6 +7,7 @@ import aiohttp
 from loguru import logger
 from slack_sdk.web.async_client import AsyncWebClient
 
+from alerts import build_ai_review_failure_alert, send_alert
 from config import settings
 from database.ai_review import (
     claim_next_ai_review,
@@ -136,8 +137,10 @@ async def run_ai_review_worker(client: AsyncWebClient) -> None:
         except Exception as error:
             retry = job["attempts"] < 2
             await fail_ai_review(job["id"], str(error), retry=retry)
-            logger.exception(f"AI 리뷰 실패 - Job: {job['id']}")
+            # 재시도가 남은 실패까지 알리면 시끄러우므로 로그 싱크의 자동 알림은 끈다.
+            logger.bind(alert=False).exception(f"AI 리뷰 실패 - Job: {job['id']}")
             if not retry:
+                await send_alert(build_ai_review_failure_alert(job, str(error)))
                 await client.chat_postMessage(
                     channel=job["slack_channel"],
                     thread_ts=job["slack_ts"],

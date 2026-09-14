@@ -62,6 +62,7 @@ chmod 600 .env
 - `ADMIN_IDS`
 - `DASHBOARD_SESSION_SECRET` (32자 이상의 암호학적 임의 문자열)
 - `CLOUDFLARE_TUNNEL_TOKEN` (Cloudflare Zero Trust에서 발급한 터널 토큰)
+- 운영 오류 알림을 받으면 `ALERT_WEBHOOK_URL` (Slack Incoming Webhook URL, 개인 워크스페이스 가능)
 - `DATABASE_PATH=data/sigongbot.db`
 - 테스트 중이면 `SESSION_NAME_OVERRIDE=테스트 회차`
 - 테스트 공지와 제출 채널을 분리하면 `TEST_SUBMISSION_CHANNEL`
