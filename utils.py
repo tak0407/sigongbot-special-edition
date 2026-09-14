@@ -11,8 +11,6 @@ from zoneinfo import ZoneInfo
 
 from config import settings
 from constants import (
-    DUE_DATES,
-    SESSION_NAMES,
     SIXTH_FIRST_PREVIOUS_DUE,
     SIXTH_FIRST_SESSION_START,
 )
@@ -77,6 +75,12 @@ def get_current_session_info(
 
     if current_time is None:
         current_time = tz_now()
+
+    # 일정 정본은 sessions 테이블이다. 관리자 웹에서 회차를 추가하거나 마감을
+    # 옮기면 여기서 바로 반영된다.
+    from database.sessions import load_schedule
+
+    SESSION_NAMES, DUE_DATES = load_schedule()
 
     if SIXTH_FIRST_PREVIOUS_DUE <= current_time < SIXTH_FIRST_SESSION_START:
         return -1, "", datetime.timedelta(0), False

@@ -57,6 +57,9 @@ a{color:#2b5ce6}
 select,button{font:inherit;padding:6px 10px;border:1px solid #d0d5dd;border-radius:8px;background:#fff}
 button{cursor:pointer}
 button.retry{border-color:#2b5ce6;color:#2b5ce6}
+form.inline{display:flex;gap:6px;align-items:center}
+form.inline input{font:inherit;padding:5px 8px;border:1px solid #d0d5dd;border-radius:8px}
+form.inline button{padding:5px 9px;font-size:13px}
 .account{padding:18px;border-top:1px solid #e4e7ec;margin-top:14px;font-size:12px;color:#667085}
 .account form{margin-top:8px}.account button{font-size:12px;padding:5px 9px}
 .pager{display:flex;gap:10px;align-items:center;margin-top:16px;font-size:14px}

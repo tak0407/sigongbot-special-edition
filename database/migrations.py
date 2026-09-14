@@ -273,6 +273,35 @@ def _online_retro_time_polls(connection: sqlite3.Connection) -> None:
     )
 
 
+def _sessions_table(connection: sqlite3.Connection) -> None:
+    """회차 일정을 코드 상수에서 DB로 옮긴다.
+
+    `constants.py`의 값을 그대로 시드해 전환 시점의 동작이 완전히 같도록 한다.
+    이후 회차 추가와 마감일 변경은 관리자 웹에서 한다.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            name TEXT PRIMARY KEY,
+            due_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS sessions_due_at_idx ON sessions(due_at)"
+    )
+
+    from constants import DUE_DATES, SESSION_NAMES
+
+    for name, due in zip(SESSION_NAMES, DUE_DATES):
+        connection.execute(
+            "INSERT OR IGNORE INTO sessions (name, due_at) VALUES (?, ?)",
+            (name, due.isoformat()),
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -282,6 +311,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (6, "admin_authentication", _admin_authentication),
     (7, "online_retro_attendance", _online_retro_attendance),
     (8, "online_retro_time_polls", _online_retro_time_polls),
+    (9, "sessions_table", _sessions_table),
 )
 
 

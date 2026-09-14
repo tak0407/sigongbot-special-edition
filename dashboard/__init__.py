@@ -40,6 +40,8 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     app.router.add_post("/ai-jobs/{job_id}/retry", ai_jobs.handle_retry)
     app.router.add_get("/guided", guided.handle)
     app.router.add_get("/schedule", schedule.handle)
+    app.router.add_post("/schedule/add", schedule.handle_add)
+    app.router.add_post("/schedule/due", schedule.handle_update_due)
     app.router.add_get("/attendance", attendance.handle)
     app.router.add_get("/members", members.handle)
 
