@@ -170,10 +170,13 @@ class DashboardTest(AdminWebTestCase):
         self.assertNotIn("2026-09-12 20:30", body)
         self.assertIn("제출 시각 (KST)", body)
 
-    async def test_dashboard_shows_failed_ai_job_reason(self):
+    async def test_dashboard_hides_the_retired_image_review_queue(self):
+        """이미지 AI 리뷰는 내려가 있어 큐에 작업이 들어올 경로가 없다.
+        빈 칸과 오래된 실패 1건만 보여 주면 운영자를 헷갈리게 한다."""
         body = await self._body()
-        self.assertIn("agy 실행 파일을 찾을 수 없습니다.", body)
-        self.assertIn("3회", body)
+        self.assertNotIn("AI 처리 대기", body)
+        self.assertNotIn("AI 처리 실패", body)
+        self.assertNotIn("agy 실행 파일을 찾을 수 없습니다.", body)
 
     async def test_dashboard_shows_submission_trend_per_session(self):
         body = await self._body()
@@ -236,8 +239,10 @@ class AdminTabsTest(AdminWebTestCase):
     async def test_tabs_share_navigation(self):
         response = await self._get("/schedule")
         body = await response.text()
-        for label in ("대시보드", "회고 열람", "AI 처리 큐", "진행 중 회고", "회차 일정", "온라인 모임 출석"):
+        for label in ("대시보드", "회고 열람", "진행 중 회고", "회차 일정", "온라인 모임 출석", "멤버"):
             self.assertIn(label, body)
+        # 이미지 AI 리뷰가 내려가 있는 동안에는 탭에 노출하지 않는다.
+        self.assertNotIn("AI 처리 큐", body)
 
     async def test_attendance_tab_lists_session_user_and_kst_time(self):
         body = await (await self._get("/attendance")).text()

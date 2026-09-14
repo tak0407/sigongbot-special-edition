@@ -5,10 +5,12 @@ from html import escape
 from dashboard.common import REFRESH_SECONDS
 from dashboard.auth import AUTH_CONTEXT, csrf_token
 
+# /ai-jobs는 이미지 AI 리뷰가 내려가 있는 동안 탭에서 뺀다. 큐에 작업이 들어올
+# 경로가 없어 빈 화면만 보이고, 재시도를 눌러도 가져갈 작업자가 없다.
+# 기능을 되살릴 때 이 줄과 main.py의 작업자 기동을 함께 복구한다.
 NAV = [
     ("/", "대시보드", "이번 회차 제출 현황"),
     ("/retrospectives", "회고 열람", "제출된 회고 본문"),
-    ("/ai-jobs", "AI 처리 큐", "질문형 회고 정리 작업"),
     ("/guided", "진행 중 회고", "질문형 회고 이탈 추적"),
     ("/schedule", "회차 일정", "마감일과 남은 회차"),
     ("/attendance", "온라인 모임 출석", "회차별 출석 현황"),
