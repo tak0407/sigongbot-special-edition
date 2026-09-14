@@ -17,7 +17,16 @@ async def _redirect_legacy_admin(request: web.Request) -> web.StreamResponse:
 
 def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     """slack_client를 넘기지 않으면 사용자/채널을 ID 그대로 표시한다."""
-    from dashboard import attendance, ai_jobs, auth, guided, overview, retrospectives, schedule
+    from dashboard import (
+        ai_jobs,
+        attendance,
+        auth,
+        guided,
+        members,
+        overview,
+        retrospectives,
+        schedule,
+    )
 
     app[SLACK_CLIENT] = slack_client
     app.router.add_get("/login", auth.handle_login_form)
@@ -32,6 +41,7 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     app.router.add_get("/guided", guided.handle)
     app.router.add_get("/schedule", schedule.handle)
     app.router.add_get("/attendance", attendance.handle)
+    app.router.add_get("/members", members.handle)
 
     # 하위 호환: 화면 링크와 로그인 리다이렉트에는 쓰지 않고 이동만 시킨다.
     app.router.add_get(LEGACY_PREFIX, _redirect_legacy_admin)

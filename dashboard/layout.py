@@ -12,6 +12,7 @@ NAV = [
     ("/guided", "진행 중 회고", "질문형 회고 이탈 추적"),
     ("/schedule", "회차 일정", "마감일과 남은 회차"),
     ("/attendance", "온라인 모임 출석", "회차별 출석 현황"),
+    ("/members", "멤버", "참여 이력과 이탈 징후"),
 ]
 
 STYLE = """
@@ -42,6 +43,9 @@ a{color:#2b5ce6}
 .done{color:#087443}
 .bar{width:180px}
 .bar span{display:block;height:10px;border-radius:5px;background:#4c6ef5;min-width:2px}
+.dots{display:inline-flex;gap:3px}
+.dot{width:9px;height:9px;border-radius:50%;background:#4c6ef5;display:inline-block}
+.dot.miss{background:#e4e7ec}
 .error{font-family:ui-monospace,monospace;font-size:12px;color:#b42318;white-space:pre-wrap;word-break:break-all}
 .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;background:#eef0f4;color:#344054}
 .pill.pending{background:#fff5e6;color:#93500b}
