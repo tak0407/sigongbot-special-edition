@@ -109,9 +109,9 @@ async def handle(request: web.Request) -> web.Response:
         )
 
     toggle = (
-        '<a href="/admin/schedule">현재 기수만 보기</a>'
+        '<a href="/schedule">현재 기수만 보기</a>'
         if show_all
-        else '<a href="/admin/schedule?all=1">전체 회차 보기</a>'
+        else '<a href="/schedule?all=1">전체 회차 보기</a>'
     )
     body = f"""
 <section class="cards">
@@ -127,7 +127,7 @@ async def handle(request: web.Request) -> web.Response:
     return web.Response(
         text=layout.render(
             title="회차 일정",
-            active="/admin/schedule",
+            active="/schedule",
             heading="회차 일정",
             subtitle="마감일과 남은 회차를 확인합니다.",
             body=body,

@@ -174,7 +174,7 @@ def _failure_rows(data: dict, directory: dict) -> str:
             f"<td>{escape(to_kst(row['updated_at']))}</td>"
             f"<td>{row['attempts']}회</td>"
             f'<td class="error">{escape(message)}</td>'
-            f'<td><a href="/admin/ai-jobs/{row["id"]}">상세</a></td>'
+            f'<td><a href="/ai-jobs/{row["id"]}">상세</a></td>'
             "</tr>"
         )
     return rows(items, 5, "실패한 AI 처리 작업이 없습니다.")
@@ -212,7 +212,7 @@ async def handle(request: web.Request) -> web.Response:
     return web.Response(
         text=layout.render(
             title="시공삶 관리자",
-            active="/admin",
+            active="/",
             heading="대시보드",
             subtitle=f"{REFRESH_SECONDS}초마다 자동 새로고침 · 기준 {escape(data['generated_at'])} (KST)",
             body=body,

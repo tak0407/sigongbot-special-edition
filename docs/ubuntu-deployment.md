@@ -125,7 +125,7 @@ curl --fail http://127.0.0.1:8000/health
 
 로그나 상태 출력에 토큰이 포함되지 않았는지 확인한다.
 
-관리자 웹은 로컬에서도 `http://127.0.0.1:8000/admin`으로 점검하며 DB
+관리자 웹은 로컬에서도 `http://127.0.0.1:8000/`으로 점검하며 DB
 관리자 로그인이 항상 필요하다. `cloudflared`는 같은 Compose 네트워크의
 `http://sigongbot:8000`으로만 연결한다. 공유기 포트 포워딩과 공인 인바운드
 포트는 열지 않는다. 외부 검증은 `docs/cloudflare-dashboard.md`의 Access 차단,

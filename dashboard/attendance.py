@@ -63,7 +63,7 @@ def _session_filters(sessions: list[str], selected: str) -> str:
         if session == selected:
             links.append(f"<b>{label}</b>")
         else:
-            links.append(f'<a href="/admin/attendance?session={quote(session)}">{label}</a>')
+            links.append(f'<a href="/attendance?session={quote(session)}">{label}</a>')
     return '<div class="filters">' + " · ".join(links) + "</div>"
 
 
@@ -94,7 +94,7 @@ async def handle(request: web.Request) -> web.Response:
     return web.Response(
         text=layout.render(
             title="온라인 모임 출석",
-            active="/admin/attendance",
+            active="/attendance",
             heading="온라인 모임 출석",
             subtitle="회차별 출석 버튼 기록을 확인합니다.",
             body=body,

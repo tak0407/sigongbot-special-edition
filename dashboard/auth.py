@@ -19,6 +19,10 @@ from config import settings
 from database.sqlite import get_connection
 
 SESSION_COOKIE = "sigongbot_admin_session"
+# 대시보드는 전용 호스트의 루트에 올라가므로 쿠키와 링크 모두 루트 기준이다.
+COOKIE_PATH = "/"
+LOGIN_PATH = "/login"
+LEGACY_PREFIX = "/admin"
 LOGIN_CSRF_COOKIE = "sigongbot_login_csrf"
 AUTH_CONTEXT = web.AppKey("admin_auth_context", object)
 PASSWORD_N = 2**14
@@ -255,13 +259,21 @@ def _delete_session(token: str) -> None:
         connection.execute("DELETE FROM admin_sessions WHERE token_hash = ?", (_token_hash(token),))
 
 
-def _safe_next(value: str) -> str:
-    return value if value.startswith("/admin") and not value.startswith("//") else "/admin"
+def safe_internal_path(value: str) -> str:
+    """같은 사이트의 루트 기준 경로만 허용하고, 예전 /admin 접두사는 벗긴다."""
+    if not value.startswith("/") or value.startswith("//") or "\\" in value:
+        return "/"
+    # 예전 /admin 북마크가 next로 들어와도 루트 기준으로 되돌린다.
+    if value == LEGACY_PREFIX:
+        return "/"
+    if value.startswith(LEGACY_PREFIX + "/"):
+        return value[len(LEGACY_PREFIX):]
+    return value
 
 
 def _set_secure_cookie(response: web.StreamResponse, name: str, value: str, *, max_age: int) -> None:
     response.set_cookie(
-        name, value, max_age=max_age, httponly=True, secure=True, samesite="Strict", path="/admin"
+        name, value, max_age=max_age, httponly=True, secure=True, samesite="Strict", path=COOKIE_PATH
     )
 
 
@@ -274,8 +286,8 @@ main{{max-width:380px;margin:10vh auto;background:white;padding:30px;border-radi
 label{{display:block;margin:16px 0 6px}}input{{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccd1d9;border-radius:8px}}
 button{{width:100%;margin-top:22px;padding:10px;border:0;border-radius:8px;background:#2b5ce6;color:white;font-weight:600}}
 .error{{color:#b42318}}small{{color:#667085}}</style><body><main><h1>시공삶 관리자</h1>
-<small>Cloudflare Access 통과 후 관리자 계정으로 로그인하세요.</small>{notice}
-<form method="post" action="/admin/login"><input type="hidden" name="csrf_token" value="{escape(csrf)}">
+<small>관리자 계정으로 로그인하세요.</small>{notice}
+<form method="post" action="/login"><input type="hidden" name="csrf_token" value="{escape(csrf)}">
 <input type="hidden" name="next" value="{escape(next_path)}"><label for="username">계정명</label>
 <input id="username" name="username" autocomplete="username" required autofocus><label for="password">비밀번호</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required>
@@ -284,14 +296,14 @@ button{{width:100%;margin-top:22px;padding:10px;border:0;border-radius:8px;backg
 
 async def handle_login_form(request: web.Request) -> web.Response:
     if await asyncio.to_thread(_load_session, request.cookies.get(SESSION_COOKIE, "")):
-        raise web.HTTPFound(_safe_next(request.query.get("next", "/admin")))
+        raise web.HTTPFound(safe_internal_path(request.query.get("next", "/")))
     nonce = secrets.token_urlsafe(24)
     try:
         csrf = _csrf_token("login:" + nonce)
     except RuntimeError as error:
         raise web.HTTPServiceUnavailable(text=str(error))
     response = web.Response(
-        text=_login_page(csrf=csrf, next_path=_safe_next(request.query.get("next", "/admin"))),
+        text=_login_page(csrf=csrf, next_path=safe_internal_path(request.query.get("next", "/"))),
         content_type="text/html",
     )
     _set_secure_cookie(response, LOGIN_CSRF_COOKIE, nonce, max_age=600)
@@ -312,7 +324,7 @@ async def handle_login(request: web.Request) -> web.Response:
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
     status, admin_user_id = await asyncio.to_thread(_authenticate_login, username, password)
-    next_path = _safe_next(str(form.get("next", "/admin")))
+    next_path = safe_internal_path(str(form.get("next", "/")))
     if status != "ok" or admin_user_id is None:
         error = (f"로그인 시도가 잠겼습니다. {LOCK_MINUTES}분 후 다시 시도하세요."
                  if status == "locked" else "계정명 또는 비밀번호가 올바르지 않습니다.")
@@ -325,7 +337,7 @@ async def handle_login(request: web.Request) -> web.Response:
     token = await asyncio.to_thread(_create_session, admin_user_id)
     response = web.HTTPFound(next_path)
     _set_secure_cookie(response, SESSION_COOKIE, token, max_age=settings.DASHBOARD_SESSION_HOURS * 3600)
-    response.del_cookie(LOGIN_CSRF_COOKIE, path="/admin", secure=True, httponly=True, samesite="Strict")
+    response.del_cookie(LOGIN_CSRF_COOKIE, path=COOKIE_PATH, secure=True, httponly=True, samesite="Strict")
     raise response
 
 
@@ -335,7 +347,7 @@ def require_admin(handler):
         token = request.cookies.get(SESSION_COOKIE, "")
         context = await asyncio.to_thread(_load_session, token)
         if context is None:
-            raise web.HTTPFound("/admin/login?next=" + quote(request.path_qs, safe="/?=&"))
+            raise web.HTTPFound(LOGIN_PATH + "?next=" + quote(request.path_qs, safe="/?=&"))
         request[AUTH_CONTEXT] = context
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             form = await request.post()
@@ -351,6 +363,6 @@ def require_admin(handler):
 async def handle_logout(request: web.Request) -> web.StreamResponse:
     context = request[AUTH_CONTEXT]
     await asyncio.to_thread(_delete_session, context.session_token)
-    response = web.HTTPFound("/admin/login")
-    response.del_cookie(SESSION_COOKIE, path="/admin", secure=True, httponly=True, samesite="Strict")
+    response = web.HTTPFound(LOGIN_PATH)
+    response.del_cookie(SESSION_COOKIE, path=COOKIE_PATH, secure=True, httponly=True, samesite="Strict")
     raise response
