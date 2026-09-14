@@ -11,6 +11,7 @@ NAV = [
     ("/admin/ai-jobs", "AI 처리 큐", "질문형 회고 정리 작업"),
     ("/admin/guided", "진행 중 회고", "질문형 회고 이탈 추적"),
     ("/admin/schedule", "회차 일정", "마감일과 남은 회차"),
+    ("/admin/attendance", "온라인 모임 출석", "회차별 출석 현황"),
 ]
 
 STYLE = """

@@ -125,6 +125,33 @@ class MigrationTest(unittest.TestCase):
             self.assertIn("token_hash", columns(connection, "admin_sessions"))
             self.assertIn("locked_until", columns(connection, "admin_login_attempts"))
 
+    def test_online_retro_attendance_table_is_migrated(self):
+        initialize_database()
+        with closing(get_connection()) as connection:
+            self.assertEqual(
+                columns(connection, "online_retro_attendance"),
+                {"id", "session_name", "team_channel", "user_id", "attended_at"},
+            )
+            connection.execute(
+                "INSERT INTO online_retro_attendance (session_name, team_channel, user_id) VALUES ('6기 1회차', 'C11111111', 'U11111111')"
+            )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "INSERT INTO online_retro_attendance (session_name, team_channel, user_id) VALUES ('6기 1회차', 'C11111111', 'U11111111')"
+                )
+            connection.execute(
+                "INSERT INTO online_retro_attendance (session_name, team_channel, user_id) VALUES ('6기 1회차', 'C22222222', 'U11111111')"
+            )
+
+    def test_online_retro_poll_tables_are_migrated(self):
+        initialize_database()
+        with closing(get_connection()) as connection:
+            self.assertIn("slots_json", columns(connection, "online_retro_time_polls"))
+            self.assertEqual(
+                columns(connection, "online_retro_time_votes"),
+                {"poll_id", "user_id", "slots_json", "created_at", "updated_at"},
+            )
+
     def test_legacy_database_gains_new_columns(self):
         self.legacy_database(("U11111111",))
         initialize_database()

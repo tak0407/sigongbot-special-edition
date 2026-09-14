@@ -9,6 +9,7 @@ from dashboard.auth import validate_dashboard_security
 from database.sqlite import initialize_database
 from slack.event_handler import app as slack_app
 from slack.events.test_announcement import run_sixth_first_announcement_scheduler
+from slack.events.online_retro_meeting import run_online_retro_meeting_scheduler
 
 async def health_check(request):
     return web.Response(text="OK", status=200)
@@ -47,6 +48,9 @@ async def main():
     announcement_task = asyncio.create_task(
         run_sixth_first_announcement_scheduler(slack_app.client)
     ) if settings.ENV == "prod" else None
+    meeting_task = asyncio.create_task(
+        run_online_retro_meeting_scheduler(slack_app.client)
+    ) if settings.ENV == "prod" and settings.ONLINE_RETRO_MEETINGS else None
 
     try:
         # HTTP 서버 시작
@@ -62,6 +66,9 @@ async def main():
         if announcement_task:
             announcement_task.cancel()
             tasks.append(announcement_task)
+        if meeting_task:
+            meeting_task.cancel()
+            tasks.append(meeting_task)
         await asyncio.gather(*tasks, return_exceptions=True)
         await handler.close_async()
         await runner.cleanup()

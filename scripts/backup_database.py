@@ -29,6 +29,9 @@ TABLES = (
     "ai_review_jobs",
     "scheduled_announcements",
     "users",
+    "online_retro_attendance",
+    "online_retro_time_polls",
+    "online_retro_time_votes",
 )
 
 

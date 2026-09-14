@@ -66,6 +66,7 @@ class AdminWebTestCase(unittest.IsolatedAsyncioTestCase):
             connection.execute("""INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item, created_at) VALUES ('U33333333', '5기 12회차', 'C22222222', '2.0', '좋음', '개선', '학습', '실행', '2026-09-12 20:30:00')""")
             connection.execute("""INSERT INTO ai_review_jobs (user_id, slack_channel, slack_ts, file_id, retrospective_text, status, attempts, last_error, updated_at) VALUES ('U11111111', 'C11111111', '1.0', 'F11111111', '회고 본문', 'failed', 3, 'agy 실행 파일을 찾을 수 없습니다.', '2026-09-12 20:40:00')""")
             connection.execute("""INSERT INTO ai_review_jobs (user_id, slack_channel, slack_ts, file_id, retrospective_text, status, attempts, updated_at) VALUES ('U22222222', 'C11111111', '3.0', 'F22222222', '다른 회고', 'completed', 1, '2026-09-12 20:45:00')""")
+            connection.execute("""INSERT INTO online_retro_attendance (session_name, team_channel, user_id, attended_at) VALUES ('6기 1회차', 'C11111111', 'U11111111', '2026-09-14 12:05:00')""")
             # 5개 질문 중 2개만 답한 진행 중 플로우.
             connection.execute(
                 """INSERT INTO guided_reflections (flow_id, user_id, slack_channel, session_name, questions_json, answers_json, current_index, updated_at) VALUES (?, 'U22222222', 'C11111111', '6기 1회차', ?, ?, 2, '2026-09-12 20:00:00')""",
@@ -201,6 +202,7 @@ class AdminTabsTest(AdminWebTestCase):
             "/admin/ai-jobs",
             "/admin/guided",
             "/admin/schedule",
+            "/admin/attendance",
         ):
             with self.subTest(path=path):
                 response = await self.client.get(path, allow_redirects=False)
@@ -209,8 +211,16 @@ class AdminTabsTest(AdminWebTestCase):
     async def test_tabs_share_navigation(self):
         response = await self._get("/admin/schedule")
         body = await response.text()
-        for label in ("대시보드", "회고 열람", "AI 처리 큐", "진행 중 회고", "회차 일정"):
+        for label in ("대시보드", "회고 열람", "AI 처리 큐", "진행 중 회고", "회차 일정", "온라인 모임 출석"):
             self.assertIn(label, body)
+
+    async def test_attendance_tab_lists_session_user_and_kst_time(self):
+        body = await (await self._get("/admin/attendance")).text()
+        self.assertIn("6기 1회차", body)
+        self.assertIn("U11111111", body)
+        self.assertIn("C11111111", body)
+        self.assertIn("2026-09-14 21:05", body)
+        self.assertIn("1명", body)
 
     async def test_retrospective_list_and_detail(self):
         body = await (await self._get("/admin/retrospectives")).text()

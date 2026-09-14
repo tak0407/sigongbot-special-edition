@@ -42,6 +42,15 @@ from slack.events.test_announcement import (
     handle_guided_submit,
     handle_guided_skip,
 )
+from slack.events.online_retro_meeting import (
+    handle_online_retro_attendance,
+    handle_open_online_retro_meeting,
+    handle_open_online_retro_photo_upload,
+    handle_online_retro_photo_submit,
+    handle_start_online_retro_photo,
+    handle_start_online_retro_sharing,
+)
+from slack.events.online_retro_poll import handle_open_time_poll, handle_time_poll_submit
 
 
 # Slack events are received exclusively through Socket Mode, so HTTP request
@@ -143,6 +152,16 @@ app.action("guided_skip_section")(handle_guided_skip)
 app.action("guided_previous_question")(handle_guided_previous)
 app.action("open_guided_result")(handle_open_guided_result)
 app.view("guided_retrospective_submit")(handle_guided_submit)
+app.action("attend_online_retro_meeting")(handle_online_retro_attendance)
+app.action("open_online_retro_meeting")(handle_open_online_retro_meeting)
+app.action("start_online_retro_sharing")(handle_start_online_retro_sharing)
+app.action("start_online_retro_photo")(handle_start_online_retro_photo)
+app.action("open_online_retro_photo_upload")(
+    handle_open_online_retro_photo_upload
+)
+app.view("online_retro_photo_submit")(handle_online_retro_photo_submit)
+app.action("open_online_retro_time_poll")(handle_open_time_poll)
+app.view("online_retro_time_poll_submit")(handle_time_poll_submit)
 
 # my retrospectives
 app.command("/내회고")(handle_command_my_retrospectives)

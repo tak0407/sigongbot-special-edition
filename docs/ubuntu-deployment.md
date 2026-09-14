@@ -66,6 +66,7 @@ chmod 600 .env
 - 테스트 중이면 `SESSION_NAME_OVERRIDE=테스트 회차`
 - 테스트 공지와 제출 채널을 분리하면 `TEST_SUBMISSION_CHANNEL`
 - 팀별 제출을 사용하면 `SUBMISSION_TEAMS`에 채널 ID별 멤버 ID 목록을 JSON으로 설정한다(README 예시 참고). 미등록 인원은 제출이 차단된다. 팀 분배 검증 시 `TEST_SUBMISSION_CHANNEL`은 비워둔다.
+- 온라인 회고 모임 공지를 사용하면 `ONLINE_RETRO_MEETINGS`에 회차, 시작·공지 시각(+09:00 포함), 채널, HTTPS 모임 링크를 JSON 배열로 설정한다(README 예시 참고).
 
 현재 봇은 Slack Socket Mode 전용이다. `SLACK_SIGNING_SECRET`은 HTTP Events API·Interactivity Request URL의 서명 검증에 쓰는 값이므로 현재 구성에서는 필수 환경변수가 아니다. 이 키가 없다는 이유만으로 배포를 중단하거나 `.env`에 임의 값을 추가하지 않는다.
 
@@ -140,6 +141,8 @@ curl --fail http://127.0.0.1:8000/health
 4. 질문형 AI 정리 완료 알림과 확인 버튼이 도착한다.
 5. 건너뛴 항목은 확인 화면에서도 선택 입력이고 AI가 내용을 채우지 않는다. 결과가 설정된 제출 채널에 게시된다.
 6. 이미지를 첨부하면 회고 본문에 정상 게시된다. 이미지 AI 리뷰는 생성하지 않는다.
+7. 온라인 회고 모임 공지의 `출석 체크`와 `모임 입장` 버튼이 보인다.
+8. 같은 사용자가 출석을 두 번 눌러도 관리자 웹 `온라인 모임 출석` 탭에는 첫 출석 한 건만 표시된다.
 
 실패 시 `docker compose logs --tail=300 sigongbot`으로 확인하되 `.env`나 토큰을 출력하지 않는다.
 

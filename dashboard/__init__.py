@@ -7,7 +7,7 @@ from dashboard.directory import SLACK_CLIENT
 
 def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     """slack_client를 넘기지 않으면 사용자/채널을 ID 그대로 표시한다."""
-    from dashboard import ai_jobs, auth, guided, overview, retrospectives, schedule
+    from dashboard import attendance, ai_jobs, auth, guided, overview, retrospectives, schedule
 
     app[SLACK_CLIENT] = slack_client
     app.router.add_get("/admin/login", auth.handle_login_form)
@@ -21,3 +21,4 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     app.router.add_post("/admin/ai-jobs/{job_id}/retry", ai_jobs.handle_retry)
     app.router.add_get("/admin/guided", guided.handle)
     app.router.add_get("/admin/schedule", schedule.handle)
+    app.router.add_get("/admin/attendance", attendance.handle)

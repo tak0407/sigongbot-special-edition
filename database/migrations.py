@@ -219,6 +219,60 @@ def _admin_authentication(connection: sqlite3.Connection) -> None:
     )
 
 
+def _online_retro_attendance(connection: sqlite3.Connection) -> None:
+    """온라인 회고 모임의 회차별 출석 기록을 추가한다."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS online_retro_attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_name TEXT NOT NULL,
+            team_channel TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            attended_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(session_name, team_channel, user_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS online_retro_attendance_session_idx
+            ON online_retro_attendance(session_name, team_channel, attended_at)
+        """
+    )
+
+
+def _online_retro_time_polls(connection: sqlite3.Connection) -> None:
+    """팀별 온라인 회고 시간 투표와 사용자 선택을 저장한다."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS online_retro_time_polls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_date TEXT NOT NULL,
+            session_name TEXT NOT NULL,
+            team_channel TEXT NOT NULL,
+            team_name TEXT NOT NULL,
+            slots_json TEXT NOT NULL,
+            slack_ts TEXT,
+            is_test INTEGER NOT NULL DEFAULT 0 CHECK (is_test IN (0, 1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(meeting_date, team_channel, is_test)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS online_retro_time_votes (
+            poll_id INTEGER NOT NULL REFERENCES online_retro_time_polls(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL,
+            slots_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (poll_id, user_id)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -226,6 +280,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     (4, "retrospectives_unique_submission", _retrospective_unique_submission),
     (5, "users_table", _users_table),
     (6, "admin_authentication", _admin_authentication),
+    (7, "online_retro_attendance", _online_retro_attendance),
+    (8, "online_retro_time_polls", _online_retro_time_polls),
 )
 
 
