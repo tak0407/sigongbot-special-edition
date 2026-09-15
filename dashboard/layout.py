@@ -11,6 +11,7 @@ from dashboard.auth import AUTH_CONTEXT, csrf_token
 NAV = [
     ("/", "대시보드", "이번 회차 제출 현황"),
     ("/retrospectives", "회고 열람", "제출된 회고 본문"),
+    ("/suggestions", "봇 개선 제안", "사용자 의견과 처리 상태"),
     ("/guided", "진행 중 회고", "질문형 회고 이탈 추적"),
     ("/schedule", "회차 일정", "마감일과 남은 회차"),
     ("/attendance", "온라인 모임 출석", "회차별 출석 현황"),
@@ -52,6 +53,7 @@ a{color:#2b5ce6}
 .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;background:#eef0f4;color:#344054}
 .pill.pending{background:#fff5e6;color:#93500b}
 .pill.processing{background:#e8edfb;color:#1b3fa8}
+.pill.in_progress{background:#e8edfb;color:#1b3fa8}
 .pill.completed{background:#e7f6ec;color:#087443}
 .pill.failed{background:#fdecea;color:#b42318}
 .pill.now{background:#e8edfb;color:#1b3fa8;font-weight:600}

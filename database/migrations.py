@@ -302,6 +302,31 @@ def _sessions_table(connection: sqlite3.Connection) -> None:
         )
 
 
+def _bot_improvement_suggestions(connection: sqlite3.Connection) -> None:
+    """Slack에서 접수한 봇 개선 제안과 운영 처리 상태를 저장한다."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_improvement_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            content TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            submission_channel TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'in_progress', 'completed')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS bot_improvement_suggestions_status_idx
+            ON bot_improvement_suggestions(status, created_at, id)
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -312,6 +337,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (7, "online_retro_attendance", _online_retro_attendance),
     (8, "online_retro_time_polls", _online_retro_time_polls),
     (9, "sessions_table", _sessions_table),
+    (10, "bot_improvement_suggestions", _bot_improvement_suggestions),
 )
 
 

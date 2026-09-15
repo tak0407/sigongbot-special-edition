@@ -31,6 +31,10 @@ from slack.events.view_admin_menu import (
     handle_view_admin_edit_retrospective,
 )
 from slack.events.command_my_retrospectives import handle_command_my_retrospectives
+from slack.events.command_suggestion import (
+    handle_command_suggestion,
+    handle_view_suggestion_submit,
+)
 from slack.events.action_view_retrospective_detail import (
     handle_action_view_retrospective_detail,
 )
@@ -201,6 +205,10 @@ app.view("online_retro_time_poll_submit")(handle_time_poll_submit)
 # my retrospectives
 app.command("/내회고")(handle_command_my_retrospectives)
 app.action("view_retrospective_detail")(handle_action_view_retrospective_detail)
+
+# bot improvement suggestions
+app.command("/제안")(handle_command_suggestion)
+app.view("bot_improvement_suggestion_submit")(handle_view_suggestion_submit)
 
 # admin
 app.command("/관리자")(handle_command_admin)  # 관리자 메뉴 호출
