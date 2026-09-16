@@ -152,6 +152,22 @@ class MigrationTest(unittest.TestCase):
                 {"poll_id", "user_id", "slots_json", "created_at", "updated_at"},
             )
 
+    def test_bot_improvement_suggestions_migration_is_idempotent(self):
+        initialize_database()
+        initialize_database()
+        with closing(get_connection()) as connection:
+            self.assertEqual(
+                columns(connection, "bot_improvement_suggestions"),
+                {
+                    "id", "category", "content", "user_id",
+                    "submission_channel", "status", "created_at", "updated_at",
+                },
+            )
+            applied = connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 11"
+            ).fetchone()[0]
+            self.assertEqual(applied, 1)
+
     def test_legacy_database_gains_new_columns(self):
         self.legacy_database(("U11111111",))
         initialize_database()

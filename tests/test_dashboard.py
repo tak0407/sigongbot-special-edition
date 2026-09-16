@@ -71,6 +71,7 @@ class AdminWebTestCase(unittest.IsolatedAsyncioTestCase):
             connection.execute("""INSERT INTO ai_review_jobs (user_id, slack_channel, slack_ts, file_id, retrospective_text, status, attempts, last_error, updated_at) VALUES ('U11111111', 'C11111111', '1.0', 'F11111111', '회고 본문', 'failed', 3, 'agy 실행 파일을 찾을 수 없습니다.', '2026-09-12 20:40:00')""")
             connection.execute("""INSERT INTO ai_review_jobs (user_id, slack_channel, slack_ts, file_id, retrospective_text, status, attempts, updated_at) VALUES ('U22222222', 'C11111111', '3.0', 'F22222222', '다른 회고', 'completed', 1, '2026-09-12 20:45:00')""")
             connection.execute("""INSERT INTO online_retro_attendance (session_name, team_channel, user_id, attended_at) VALUES ('6기 1회차', 'C11111111', 'U11111111', '2026-09-14 12:05:00')""")
+            connection.execute("""INSERT INTO bot_improvement_suggestions (category, content, user_id, submission_channel) VALUES ('feature', '제안 상세 내용입니다.', 'U11111111', 'C11111111')""")
             # 5개 질문 중 2개만 답한 진행 중 플로우.
             connection.execute(
                 """INSERT INTO guided_reflections (flow_id, user_id, slack_channel, session_name, questions_json, answers_json, current_index, updated_at) VALUES (?, 'U22222222', 'C11111111', '6기 1회차', ?, ?, 2, '2026-09-12 20:00:00')""",
@@ -210,13 +211,14 @@ class AdminTabsTest(AdminWebTestCase):
             "/guided",
             "/schedule",
             "/attendance",
+            "/suggestions",
         ):
             with self.subTest(path=path):
                 response = await self.client.get(path, allow_redirects=False)
                 self.assertEqual(response.status, 302)
 
     async def test_pages_link_to_root_paths_only(self):
-        for path in ("/", "/retrospectives", "/ai-jobs", "/guided", "/schedule", "/attendance"):
+        for path in ("/", "/retrospectives", "/ai-jobs", "/guided", "/schedule", "/attendance", "/suggestions"):
             with self.subTest(path=path):
                 body = await (await self._get(path)).text()
                 self.assertNotIn("/admin", body)
@@ -239,7 +241,7 @@ class AdminTabsTest(AdminWebTestCase):
     async def test_tabs_share_navigation(self):
         response = await self._get("/schedule")
         body = await response.text()
-        for label in ("대시보드", "회고 열람", "진행 중 회고", "회차 일정", "온라인 모임 출석", "멤버"):
+        for label in ("대시보드", "회고 열람", "봇 개선 제안", "진행 중 회고", "회차 일정", "온라인 모임 출석", "멤버"):
             self.assertIn(label, body)
         # 이미지 AI 리뷰가 내려가 있는 동안에는 탭에 노출하지 않는다.
         self.assertNotIn("AI 처리 큐", body)
@@ -270,6 +272,40 @@ class AdminTabsTest(AdminWebTestCase):
 
     async def test_retrospective_detail_404_for_unknown_id(self):
         self.assertEqual((await self._get("/retrospectives/9999")).status, 404)
+
+    async def test_suggestion_list_detail_and_status_update(self):
+        body = await (await self._get("/suggestions")).text()
+        self.assertIn("제안 상세 내용입니다.", body)
+        self.assertIn("접수", body)
+        detail = await (await self._get("/suggestions/1")).text()
+        self.assertIn("제안 상세 내용입니다.", detail)
+        response = await self.client.post(
+            "/suggestions/1/status",
+            headers=self._auth_headers(),
+            data={"csrf_token": self._csrf(), "status": "in_progress"},
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status, 302)
+        with get_connection() as connection:
+            status = connection.execute(
+                "SELECT status FROM bot_improvement_suggestions WHERE id = 1"
+            ).fetchone()[0]
+        self.assertEqual(status, "in_progress")
+
+    async def test_suggestion_status_requires_auth_and_csrf(self):
+        unauthenticated = await self.client.post(
+            "/suggestions/1/status",
+            data={"status": "completed"},
+            allow_redirects=False,
+        )
+        self.assertEqual(unauthenticated.status, 302)
+        rejected = await self.client.post(
+            "/suggestions/1/status",
+            headers=self._auth_headers(),
+            data={"status": "completed"},
+            allow_redirects=False,
+        )
+        self.assertEqual(rejected.status, 403)
 
     async def test_ai_job_list_filter_and_detail(self):
         body = await (await self._get("/ai-jobs")).text()

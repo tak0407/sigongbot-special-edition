@@ -27,6 +27,7 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
         overview,
         retrospectives,
         schedule,
+        suggestions,
     )
 
     app[SLACK_CLIENT] = slack_client
@@ -51,6 +52,11 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     )
     app.router.add_get("/attendance", attendance.handle)
     app.router.add_get("/members", members.handle)
+    app.router.add_get("/suggestions", suggestions.handle_list)
+    app.router.add_get("/suggestions/{suggestion_id}", suggestions.handle_detail)
+    app.router.add_post(
+        "/suggestions/{suggestion_id}/status", suggestions.handle_status_update
+    )
 
     # 하위 호환: 화면 링크와 로그인 리다이렉트에는 쓰지 않고 이동만 시킨다.
     app.router.add_get(LEGACY_PREFIX, _redirect_legacy_admin)

@@ -17,6 +17,9 @@ features:
     - command: /내회고
       description: 내가 작성한 회고를 확인합니다
       should_escape: false
+    - command: /제안
+      description: 시공봇 개선 제안을 제출합니다
+      should_escape: false
     - command: /관리자
       description: 시공봇 관리자 메뉴를 엽니다
       should_escape: false
