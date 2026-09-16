@@ -57,6 +57,8 @@ a{color:#2b5ce6}
 .pill.now{background:#e8edfb;color:#1b3fa8;font-weight:600}
 .filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0}
 select,button{font:inherit;padding:6px 10px;border:1px solid #d0d5dd;border-radius:8px;background:#fff}
+textarea{font:inherit;width:100%;max-width:760px;padding:10px 12px;border:1px solid #d0d5dd;border-radius:8px;line-height:1.5;resize:vertical;margin-top:8px}
+code{font-family:ui-monospace,monospace;font-size:12px;background:#f0f2f5;padding:1px 5px;border-radius:4px}
 button{cursor:pointer}
 button.retry{border-color:#2b5ce6;color:#2b5ce6}
 form.inline{display:flex;gap:6px;align-items:center}

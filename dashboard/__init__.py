@@ -19,6 +19,7 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     """slack_client를 넘기지 않으면 사용자/채널을 ID 그대로 표시한다."""
     from dashboard import (
         ai_jobs,
+        announcement,
         attendance,
         auth,
         guided,
@@ -42,6 +43,12 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     app.router.add_get("/schedule", schedule.handle)
     app.router.add_post("/schedule/add", schedule.handle_add)
     app.router.add_post("/schedule/due", schedule.handle_update_due)
+    app.router.add_get("/schedule/announcement", announcement.handle)
+    app.router.add_post("/schedule/announcement", announcement.handle_save)
+    app.router.add_post("/schedule/announcement/time", announcement.handle_schedule)
+    app.router.add_post(
+        "/schedule/announcement/template", announcement.handle_save_template
+    )
     app.router.add_get("/attendance", attendance.handle)
     app.router.add_get("/members", members.handle)
 

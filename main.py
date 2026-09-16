@@ -26,7 +26,7 @@ try:
     from dashboard.auth import validate_dashboard_security
     from database.sqlite import initialize_database
     from slack.event_handler import app as slack_app
-    from slack.events.test_announcement import run_sixth_first_announcement_scheduler
+    from slack.session_announcement import run_session_announcement_scheduler
     from slack.events.online_retro_meeting import run_online_retro_meeting_scheduler
 except Exception:
     logger.exception("시공봇 설정을 불러오지 못해 시작할 수 없습니다.")
@@ -86,7 +86,7 @@ async def main():
     announcement_task = asyncio.create_task(
         supervise(
             "회차 공지 스케줄러",
-            lambda: run_sixth_first_announcement_scheduler(slack_app.client),
+            lambda: run_session_announcement_scheduler(slack_app.client),
         )
     ) if settings.ENV == "prod" else None
     meeting_task = asyncio.create_task(

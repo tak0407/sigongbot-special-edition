@@ -12,16 +12,13 @@ from constants import (
     SESSION_NAMES,
     SIXTH_FIRST_PREVIOUS_DUE,
     SIXTH_FIRST_SESSION_DUE,
+    SIXTH_FIRST_SESSION_NAME,
     SIXTH_FIRST_SESSION_START,
 )
 from database.retrospective import create_retrospective
 from database.sqlite import initialize_database
 from slack.events.command_retrospective import build_retrospective_view
-from slack.events.test_announcement import (
-    SIXTH_FIRST_SESSION_NAME,
-    post_sixth_first_announcement,
-    post_sixth_first_reminder,
-)
+from slack.session_announcement import post_sixth_first_reminder
 from utils import get_current_session_info
 
 
@@ -42,14 +39,6 @@ class SixthSessionAnnouncementTest(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(settings, "ANNOUNCEMENT_CHANNEL", "C99999999"))
         initialize_database()
         self.client = SimpleNamespace(chat_postMessage=AsyncMock())
-
-    async def test_announcement_posts_once_in_announcement_channel(self):
-        await post_sixth_first_announcement(self.client)
-        await post_sixth_first_announcement(self.client)
-        self.client.chat_postMessage.assert_awaited_once()
-        message = self.client.chat_postMessage.await_args.kwargs
-        self.assertEqual(message["channel"], "C99999999")
-        self.assertIn("<!here>", message["blocks"][0]["text"]["text"])
 
     async def test_reminder_skips_completed_team_channel(self):
         await create_retrospective(

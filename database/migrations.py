@@ -7,8 +7,10 @@
 마이그레이션의 내용은 수정하지 않는다.
 """
 
+import datetime
 import sqlite3
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
@@ -302,6 +304,69 @@ def _sessions_table(connection: sqlite3.Connection) -> None:
         )
 
 
+def _session_announcements(connection: sqlite3.Connection) -> None:
+    """매회차 제출 공지를 DB로 옮긴다.
+
+    공지 문구가 코드에 박혀 있어 6기 1회차 한 번만 나가고 끝났다. 회차마다
+    공지 시각과 문구를 두고, 기본 문구는 `announcement_templates`에서 읽는다.
+
+    `announce_at`은 지난 회차까지 포함해 전부 채운다. 발송은 `announce_at <=
+    now < due_at`일 때만 하므로 이미 마감된 회차가 뒤늦게 다시 나가지 않는다.
+    """
+    columns = _column_names(connection, "sessions")
+    if "announce_at" not in columns:
+        connection.execute("ALTER TABLE sessions ADD COLUMN announce_at TEXT")
+    if "announcement" not in columns:
+        connection.execute("ALTER TABLE sessions ADD COLUMN announcement TEXT")
+    if "announced_at" not in columns:
+        connection.execute("ALTER TABLE sessions ADD COLUMN announced_at TEXT")
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS announcement_templates (
+            kind TEXT PRIMARY KEY,
+            body TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    from constants import ANNOUNCE_LEAD, DEFAULT_SUBMISSION_ANNOUNCEMENT
+
+    connection.execute(
+        "INSERT OR IGNORE INTO announcement_templates (kind, body) VALUES (?, ?)",
+        ("session_submission", DEFAULT_SUBMISSION_ANNOUNCEMENT),
+    )
+
+    pending = connection.execute(
+        "SELECT name, due_at FROM sessions WHERE announce_at IS NULL"
+    ).fetchall()
+    for row in pending:
+        due = datetime.datetime.fromisoformat(row["due_at"])
+        connection.execute(
+            "UPDATE sessions SET announce_at = ? WHERE name = ?",
+            ((due - ANNOUNCE_LEAD).isoformat(), row["name"]),
+        )
+
+    # 6기 1회차는 하드코딩된 스케줄러가 이미 보냈다. 마감도 지나 다시 나갈 일은
+    # 없지만, 화면에 "예정"으로 보이지 않도록 발송 이력을 옮겨 둔다.
+    # `scheduled_announcements.sent_at`은 SQLite가 UTC로 남긴 타임존 없는
+    # 문자열이다. `announced_at`은 KST 기준 시각으로 통일해 둬야 화면에서
+    # 9시간 어긋나지 않는다.
+    sent = connection.execute(
+        "SELECT sent_at FROM scheduled_announcements"
+        " WHERE announcement_key LIKE '6-1-announcement:%'"
+    ).fetchone()
+    if sent:
+        moment = datetime.datetime.fromisoformat(str(sent["sent_at"]).replace(" ", "T"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=datetime.timezone.utc)
+        connection.execute(
+            "UPDATE sessions SET announced_at = ? WHERE name = ?",
+            (moment.astimezone(ZoneInfo("Asia/Seoul")).isoformat(), "6기 1회차"),
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -312,6 +377,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (7, "online_retro_attendance", _online_retro_attendance),
     (8, "online_retro_time_polls", _online_retro_time_polls),
     (9, "sessions_table", _sessions_table),
+    (10, "session_announcements", _session_announcements),
 )
 
 

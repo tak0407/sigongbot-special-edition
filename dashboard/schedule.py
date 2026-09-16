@@ -10,9 +10,17 @@ from aiohttp import web
 from loguru import logger
 
 from dashboard import layout
+from dashboard.announcement import PLACEHOLDER_HELP, state
 from dashboard.auth import csrf_token, require_admin
 from dashboard.common import KST, rows
-from database.sessions import ScheduleError, add_session, list_sessions, update_due_at
+from database.sessions import (
+    MAX_ANNOUNCEMENT_LENGTH,
+    ScheduleError,
+    add_session,
+    get_template,
+    list_sessions,
+    update_due_at,
+)
 from utils import format_remaining_time, get_current_session_info, tz_now
 
 LOW_REMAINING = 2
@@ -43,6 +51,7 @@ def _collect(show_all: bool) -> dict:
             continue
         items.append(
             {
+                **row,
                 "name": name,
                 "due": due,
                 "past": due <= now,
@@ -51,10 +60,12 @@ def _collect(show_all: bool) -> dict:
                 # 마감이 지난 회차의 마감 시각을 옮기면 그 구간에 제출된 회고가
                 # 다른 회차에 속한 것처럼 집계되므로 예정 회차만 고칠 수 있다.
                 "editable": due > now,
+                "announcement_state": state(row, now)[0],
             }
         )
     return {
         "items": items,
+        "template": get_template(),
         "upcoming": upcoming,
         "current_name": current_name or "진행 중인 회차 없음",
         "current_cohort": current_cohort,
@@ -84,21 +95,23 @@ def _schedule_rows(request, data: dict) -> str:
     items = []
     for row in data["items"]:
         if row["current"]:
-            state = '<span class="pill now">진행 중</span>'
+            status = '<span class="pill now">진행 중</span>'
         elif row["past"]:
-            state = '<span class="pill">마감</span>'
+            status = '<span class="pill">마감</span>'
         else:
-            state = '<span class="pill pending">예정</span>'
+            status = '<span class="pill pending">예정</span>'
+        link = f'/schedule/announcement?{urlencode({"name": row["name"]})}'
         items.append(
             "<tr>"
             f"<td>{escape(row['name'])}</td>"
             f"<td>{row['due'].strftime('%Y-%m-%d %H:%M')} ({'월화수목금토일'[row['due'].weekday()]})</td>"
-            f"<td>{state}</td>"
+            f"<td>{status}</td>"
             f"<td>{row['submitters']}명</td>"
+            f"<td>{row['announcement_state']} <a href=\"{link}\">문구</a></td>"
             f"<td>{_due_form(request, row)}</td>"
             "</tr>"
         )
-    return rows(items, 5, "표시할 회차가 없습니다.")
+    return rows(items, 6, "표시할 회차가 없습니다.")
 
 
 @require_admin
@@ -125,6 +138,8 @@ async def handle(request: web.Request) -> web.Response:
         notice = f'<div class="warn">`{escape(request.query["added"])}` 회차를 추가했습니다.</div>'
     elif request.query.get("updated"):
         notice = f'<div class="warn">`{escape(request.query["updated"])}` 마감 시각을 바꿨습니다.</div>'
+    elif request.query.get("template"):
+        notice = '<div class="warn">제출 공지 기본 문구를 저장했습니다.</div>'
     elif request.query.get("error"):
         notice = f'<div class="warn">{escape(request.query["error"])}</div>'
 
@@ -140,7 +155,7 @@ async def handle(request: web.Request) -> web.Response:
 </section>
 {warning}
 <div class="filters"><small>{escape(data['current_cohort'])} 일정</small>{toggle}</div>
-<table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>마감 변경</th></tr></thead>
+<table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>마감 변경</th></tr></thead>
 <tbody>{_schedule_rows(request, data)}</tbody></table>
 <small>마감이 지난 회차는 바꿀 수 없습니다. 그 구간에 제출된 회고가 다른 회차에 속한 것처럼 집계되기 때문입니다.
 회차 이름은 회고에 그대로 기록되는 값이라 만든 뒤에는 바꿀 수 없습니다.</small>
@@ -151,6 +166,13 @@ async def handle(request: web.Request) -> web.Response:
 <input type="text" name="name" placeholder="7기 1회차" required>
 <input type="datetime-local" name="due_at" required>
 <button type="submit">추가</button></form>
+<h2>제출 공지 기본 문구</h2>
+<small>공지 시각이 되면 이 문구가 회차마다 나갑니다. {PLACEHOLDER_HELP}
+특정 회차만 다르게 쓰려면 위 표의 `문구`에서 그 회차만 덮어씁니다.</small>
+<form method="post" action="/schedule/announcement/template">
+<input type="hidden" name="csrf_token" value="{csrf_token(request)}">
+<textarea name="body" rows="8" maxlength="{MAX_ANNOUNCEMENT_LENGTH}" required>{escape(data['template'])}</textarea>
+<div class="filters"><button type="submit">기본 문구 저장</button></div></form>
 {notice}
 """
     return web.Response(

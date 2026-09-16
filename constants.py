@@ -179,3 +179,16 @@ _SIXTH_FIRST_INDEX = SESSION_NAMES.index(SIXTH_FIRST_SESSION_NAME)
 SIXTH_FIRST_SESSION_DUE = DUE_DATES[_SIXTH_FIRST_INDEX]
 # 5기 마지막 마감. 이 시점부터 6기 시작 전까지는 진행 중인 회차가 없다.
 SIXTH_FIRST_PREVIOUS_DUE = DUE_DATES[_SIXTH_FIRST_INDEX - 1]
+
+# 제출 공지를 마감 며칠 전에 띄울지. 6기 1회차(금 19:00 공지 → 화 05:00 마감)에서
+# 실제로 쓰던 간격이고, 회차를 추가할 때 공지 시각의 기본값으로 쓴다.
+ANNOUNCE_LEAD = datetime.timedelta(days=3, hours=10)
+
+# 매회차 제출 공지의 기본 문구. 마이그레이션 10의 시드 원본이고, 이후 편집은
+# 관리자 웹에서 한다. `{회차}`와 `{마감}`은 발송 시점에 치환된다.
+DEFAULT_SUBMISSION_ANNOUNCEMENT = (
+    "<!here>\n\n"
+    "*{회차} 회고를 제출해 주세요* 🌱\n"
+    "아래 버튼에서 회고를 작성하면 본인이 속한 팀 채널에 자동으로 공유됩니다.\n"
+    "마감은 {마감}입니다. 이번 주를 살아낸 나에게 다음 한 주를 위한 힌트를 남겨주세요."
+)

@@ -14,20 +14,11 @@ from database.guided_reflection import (
     save_guided_format,
     save_guided_answer,
 )
-from database.retrospective import get_submitted_user_ids
-from database.scheduled_announcements import announcement_sent, mark_announcement_sent
 from reflection_questions import select_reflection_questions
 from slack.events.command_retrospective import build_retrospective_view
-from constants import (
-    SIXTH_FIRST_SESSION_DUE,
-    SIXTH_FIRST_SESSION_NAME,
-    SIXTH_FIRST_SESSION_START,
-)
-from utils import tz_now
 
 
 TEST_SESSION_NAME = "테스트 회차"
-SIXTH_FIRST_REMINDER_AT = SIXTH_FIRST_SESSION_START.replace(day=13, hour=21)
 
 RETROSPECTIVE_METHODS = [
     {
@@ -234,108 +225,11 @@ async def handle_post_test_announcement(
     )
 
 
-def _announcement_blocks(channel_id: str) -> list[dict]:
-    metadata = json.dumps(
-        {
-            "channel_id": channel_id,
-            "session_name": SIXTH_FIRST_SESSION_NAME,
-            "test_mode": False,
-        },
-        ensure_ascii=False,
-    )
-    return [
-        {
-            "type": "section",
-            "text": {
-                    "type": "mrkdwn",
-                    "text": (
-                    "<!here>\n\n"
-                    "*6기 1회차 회고를 제출해 주세요* 🌱\n"
-                    "이번 기수부터 회고를 더 편하게 남길 수 있도록 제출 방식을 바꿨어요.\n"
-                    "아래 버튼에서 회고를 작성하면 본인이 속한 팀 채널에 자동으로 공유됩니다.\n\n"
-                    "6기의 첫 회고인 만큼, 이번 주를 살아낸 나에게 다음 한 주를 위한 작은 힌트를 남겨주세요."
-                ),
-            },
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "action_id": "start_retrospective_from_announcement",
-                    "text": {"type": "plain_text", "text": "회고 제출하기"},
-                    "style": "primary",
-                    "value": metadata,
-                }
-            ],
-        },
-    ]
-
-
 def _team_channels() -> dict[str, set[str]]:
     channels: dict[str, set[str]] = {}
     for user_id, channel_id in settings.SUBMISSION_DESTINATIONS.items():
         channels.setdefault(channel_id, set()).add(user_id)
     return channels
-
-
-async def post_sixth_first_announcement(client: AsyncWebClient) -> None:
-    channel_id = settings.ANNOUNCEMENT_CHANNEL
-    if not channel_id:
-        logger.warning("ANNOUNCEMENT_CHANNEL이 비어 있어 첫 공지를 발송하지 않습니다.")
-        return
-    key = f"6-1-announcement:{channel_id}"
-    if await announcement_sent(key):
-        return
-    await client.chat_postMessage(
-        channel=channel_id,
-        text="<!here> 6기 1회차 회고를 제출해 주세요.",
-        blocks=_announcement_blocks(channel_id),
-    )
-    await mark_announcement_sent(key)
-
-
-async def post_sixth_first_reminder(client: AsyncWebClient) -> None:
-    submitted = await get_submitted_user_ids(SIXTH_FIRST_SESSION_NAME)
-    members = set(settings.SUBMISSION_DESTINATIONS)
-    channel_id = settings.ANNOUNCEMENT_CHANNEL
-    if not channel_id or not members or members <= submitted:
-        return
-    key = f"6-1-reminder:{channel_id}"
-    if await announcement_sent(key):
-        return
-    await client.chat_postMessage(
-        channel=channel_id,
-        text="6기 1회차 회고 마감까지 약 하루 남았어요.",
-        blocks=[
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": (
-                        "*6기 1회차 회고 마감까지 약 하루 남았어요* ⏰\n"
-                        "아직 회고를 남기지 않았다면 위 공지의 `회고 제출하기` 버튼에서 작성해 주세요.\n"
-                        "마감은 화요일 오전 5시입니다."
-                    ),
-                },
-            }
-        ],
-    )
-    await mark_announcement_sent(key)
-
-
-async def run_sixth_first_announcement_scheduler(client: AsyncWebClient) -> None:
-    logger.info("6기 1회차 공지 스케줄러가 시작되었습니다.")
-    while True:
-        now = tz_now()
-        try:
-            if SIXTH_FIRST_SESSION_START <= now < SIXTH_FIRST_SESSION_DUE:
-                await post_sixth_first_announcement(client)
-            if SIXTH_FIRST_REMINDER_AT <= now < SIXTH_FIRST_SESSION_DUE:
-                await post_sixth_first_reminder(client)
-        except Exception:
-            logger.exception("6기 1회차 공지 발송에 실패했습니다.")
-        await asyncio.sleep(60)
 
 
 async def handle_start_from_announcement(
