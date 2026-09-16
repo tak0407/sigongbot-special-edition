@@ -4,12 +4,9 @@ from slack.types import CommandBodyType
 from slack_bolt.async_app import AsyncAck
 from slack_sdk.web.async_client import AsyncWebClient
 
-from config import settings
-from database import check_user_submitted_this_session
 from utils import (
     format_remaining_time,
     get_current_session_info,
-    get_latest_temp_retrospective,
 )
 
 
@@ -165,48 +162,11 @@ async def handle_command_retrospective(
     ack: AsyncAck, body: CommandBodyType, client: AsyncWebClient
 ):
     await ack()
-    user_id = body["user_id"]
-    session_info = get_current_session_info()
-    session_name = session_info[1]
-    test_mode = bool(settings.SESSION_NAME_OVERRIDE)
+    from slack.events.submission_entry import open_submission_entry
 
-    if not session_info[3]:
-        await client.chat_postEphemeral(
-            channel=body["channel_id"],
-            user=user_id,
-            text="현재는 회고 제출 기간이 아니에요.",
-        )
-        return
-
-    if not test_mode and await check_user_submitted_this_session(
-        user_id=user_id, session_name=session_name
-    ):
-        await client.views_open(
-            trigger_id=body["trigger_id"],
-            view={
-                "type": "modal",
-                "title": {"type": "plain_text", "text": "회고 공유"},
-                "close": {"type": "plain_text", "text": "확인"},
-                "blocks": [
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"<@{user_id}>님은 이미 `{session_name}` 회고를 공유했어요! 🤗",
-                        },
-                    }
-                ],
-            },
-        )
-        return
-
-    initial_values = get_latest_temp_retrospective(user_id) or {}
-    await client.views_open(
+    await open_submission_entry(
+        client=client,
         trigger_id=body["trigger_id"],
-        view=build_retrospective_view(
-            channel_id=body["channel_id"],
-            session_name=session_name,
-            initial_values=initial_values,
-            test_mode=test_mode,
-        ),
+        user_id=body["user_id"],
+        channel_id=body["channel_id"],
     )

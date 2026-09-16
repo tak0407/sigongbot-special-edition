@@ -391,6 +391,19 @@ def _bot_improvement_suggestions(connection: sqlite3.Connection) -> None:
         """
     )
 
+
+def _submission_announcement_messages(connection: sqlite3.Connection) -> None:
+    connection.execute("""
+        CREATE TABLE submission_announcement_messages (
+            session_name TEXT PRIMARY KEY,
+            channel_id TEXT NOT NULL,
+            message_ts TEXT NOT NULL,
+            body TEXT NOT NULL,
+            closed_at TEXT
+        )
+    """)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -402,7 +415,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     (8, "online_retro_time_polls", _online_retro_time_polls),
     (9, "sessions_table", _sessions_table),
     (10, "session_announcements", _session_announcements),
-    (11, "bot_improvement_suggestions", _bot_improvement_suggestions),
+    (11, "submission_announcement_messages", _submission_announcement_messages),
+    (12, "bot_improvement_suggestions", _bot_improvement_suggestions),
 )
 
 

@@ -23,7 +23,7 @@ from constants import (
 from dashboard import auth, register_dashboard_routes
 from database import sessions
 from database.sqlite import get_connection, initialize_database
-from slack.session_announcement import post_due_announcements
+from slack.session_announcement import post_due_announcements, close_due_announcements
 from utils import get_current_session_info, tz_now
 
 KST = ZoneInfo("Asia/Seoul")
@@ -218,7 +218,7 @@ class AnnouncementTestCase(ScheduleTestCase):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.enterContext(patch.object(settings, "ANNOUNCEMENT_CHANNEL", "C99999999"))
-        self.slack = SimpleNamespace(chat_postMessage=AsyncMock())
+        self.slack = SimpleNamespace(chat_postMessage=AsyncMock(return_value={"ts": "123.456"}))
 
     def _replace_schedule(self, rows: list[tuple]) -> None:
         """(이름, 마감, 공지 시각, 문구) 목록으로 일정을 통째로 갈아 끼운다."""
@@ -352,6 +352,58 @@ class AnnouncementSendingTest(AnnouncementTestCase):
             self.assertEqual(await post_due_announcements(self.slack, now=now), 0)
         self.slack.chat_postMessage.assert_not_awaited()
         self.assertIsNone(sessions.get_session("9기 1회차")["announced_at"])
+
+
+class AnnouncementClosingTest(AnnouncementTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.slack.chat_update = AsyncMock()
+        self.before = self.FUTURE - datetime.timedelta(hours=1)
+        self._replace_schedule([
+            ("9기 1회차", self.FUTURE, self.before, "원래 공지 본문"),
+        ])
+        await post_due_announcements(self.slack, now=self.before)
+
+    async def test_closes_at_deadline_preserving_body_and_original_channel(self):
+        self.assertEqual(await close_due_announcements(self.slack, now=self.before), 0)
+        self.slack.chat_update.assert_not_awaited()
+        with patch.object(settings, "ANNOUNCEMENT_CHANNEL", ""):
+            self.assertEqual(await close_due_announcements(self.slack, now=self.FUTURE), 1)
+        message = self.slack.chat_update.await_args.kwargs
+        self.assertEqual(message["channel"], "C99999999")
+        self.assertEqual(message["ts"], "123.456")
+        self.assertEqual(message["blocks"][0]["text"]["text"], "원래 공지 본문")
+        self.assertNotIn('"type": "button"', json.dumps(message))
+        self.assertIn("마감되었습니다", message["text"])
+        self.assertEqual(await close_due_announcements(self.slack, now=self.FUTURE), 0)
+        self.slack.chat_update.assert_awaited_once()
+
+    async def test_restart_catches_up_and_does_not_post_another_message(self):
+        initialize_database()
+        sessions.invalidate()
+        fresh_client = SimpleNamespace(chat_update=AsyncMock(), chat_postMessage=AsyncMock())
+        self.assertEqual(await close_due_announcements(fresh_client, now=self.FUTURE + datetime.timedelta(days=3)), 1)
+        fresh_client.chat_postMessage.assert_not_awaited()
+
+    async def test_failed_update_is_retried(self):
+        self.slack.chat_update.side_effect = RuntimeError("temporary Slack failure")
+        self.assertEqual(await close_due_announcements(self.slack, now=self.FUTURE), 0)
+        self.assertEqual(len(sessions.announcements_to_close(self.FUTURE)), 1)
+        self.slack.chat_update.side_effect = None
+        self.assertEqual(await close_due_announcements(self.slack, now=self.FUTURE), 1)
+
+    async def test_changed_deadline_is_used(self):
+        extended = self.FUTURE + datetime.timedelta(days=1)
+        with get_connection() as connection:
+            connection.execute("UPDATE sessions SET due_at = ?", (extended.isoformat(),))
+        self.assertEqual(await close_due_announcements(self.slack, now=self.FUTURE), 0)
+        self.assertEqual(await close_due_announcements(self.slack, now=extended), 1)
+
+    async def test_legacy_announcements_without_message_id_are_not_updated(self):
+        with get_connection() as connection:
+            connection.execute("DELETE FROM submission_announcement_messages")
+        self.assertEqual(await close_due_announcements(self.slack, now=self.FUTURE), 0)
+        self.slack.chat_update.assert_not_awaited()
 
 
 class AnnouncementEditTest(AnnouncementTestCase):

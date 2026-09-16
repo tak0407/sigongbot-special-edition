@@ -137,7 +137,7 @@ class SubmissionRoutingTest(unittest.IsolatedAsyncioTestCase):
         view = announcement.build_method_selection_view(
             {"channel_id": "C99999999", "session_name": "운영 1회차"}, options
         )
-        channel_block = next(block for block in view["blocks"] if block["block_id"] == "submission_channel")
+        channel_block = next(block for block in view["blocks"] if block.get("block_id") == "submission_channel")
         self.assertEqual(channel_block["element"]["options"], options)
 
     async def test_announcement_has_one_button_in_source_channel(self):

@@ -164,9 +164,19 @@ class MigrationTest(unittest.TestCase):
                 },
             )
             applied = connection.execute(
-                "SELECT COUNT(*) FROM schema_migrations WHERE version = 11"
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 12"
             ).fetchone()[0]
             self.assertEqual(applied, 1)
+            migration_names = dict(connection.execute(
+                "SELECT version, name FROM schema_migrations WHERE version IN (11, 12)"
+            ))
+            self.assertEqual(
+                migration_names,
+                {
+                    11: "submission_announcement_messages",
+                    12: "bot_improvement_suggestions",
+                },
+            )
 
     def test_legacy_database_gains_new_columns(self):
         self.legacy_database(("U11111111",))
