@@ -270,15 +270,22 @@ async def check_user_submitted_this_session(user_id: str, session_name: str) -> 
     return await asyncio.to_thread(select)
 
 
-async def get_submitted_user_ids(session_name: str) -> set[str]:
+async def get_submitted_user_ids(
+    session_name: str, *, include_test: bool = True
+) -> set[str]:
+    """회차에 회고를 남긴 사용자 ID를 모은다.
+
+    미제출자에게 개인 리마인더를 보내는 쪽은 테스트 제출을 제출로 세면 안 된다.
+    기존 호출부의 동작을 바꾸지 않으려고 `include_test` 기본값은 True로 둔다.
+    """
+
     def select() -> set[str]:
+        query = "SELECT DISTINCT user_id FROM retrospectives WHERE session_name = ?"
+        if not include_test:
+            query += " AND is_test_submission = 0"
         with get_connection() as connection:
             return {
-                row["user_id"]
-                for row in connection.execute(
-                    "SELECT DISTINCT user_id FROM retrospectives WHERE session_name = ?",
-                    (session_name,),
-                )
+                row["user_id"] for row in connection.execute(query, (session_name,))
             }
 
     return await asyncio.to_thread(select)
