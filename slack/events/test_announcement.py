@@ -48,6 +48,13 @@ def build_method_selection_view(
     ]
     blocks = [
         {
+            "type": "section",
+            "text": {
+                "type": "plain_text",
+                "text": f"이번에 제출할 회고는 {metadata['session_name']}입니다.",
+            },
+        },
+        {
             "type": "input",
             "block_id": "retrospective_method",
             "label": {"type": "plain_text", "text": "회고 방식을 선택해 주세요"},

@@ -56,7 +56,7 @@ class GuidedReflectionTest(unittest.IsolatedAsyncioTestCase):
                 }
             )
             View(**selection).validate_json()
-            radio = selection["blocks"][0]["element"]
+            radio = next(block["element"] for block in selection["blocks"] if block.get("block_id") == "retrospective_method")
             self.assertEqual(radio["type"], "radio_buttons")
             self.assertIn("베타", radio["options"][1]["text"]["text"])
             selection["state"] = {
