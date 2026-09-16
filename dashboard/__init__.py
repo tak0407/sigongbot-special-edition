@@ -24,6 +24,7 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
         auth,
         guided,
         members,
+        online_retro,
         overview,
         retrospectives,
         schedule,
@@ -57,6 +58,9 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     app.router.add_post(
         "/suggestions/{suggestion_id}/status", suggestions.handle_status_update
     )
+    app.router.add_get("/online-retro", online_retro.handle)
+    app.router.add_post("/online-retro/{poll_id}/confirm", online_retro.handle_confirm)
+    app.router.add_post("/online-retro/{poll_id}/cancel", online_retro.handle_cancel)
 
     # 하위 호환: 화면 링크와 로그인 리다이렉트에는 쓰지 않고 이동만 시킨다.
     app.router.add_get(LEGACY_PREFIX, _redirect_legacy_admin)

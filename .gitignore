@@ -235,3 +235,10 @@ backups/
 *.db.gz
 *.sqlite
 *.sqlite3
+
+# Google OAuth 인증정보. 클라이언트 시크릿과 refresh token은 커밋하지 않는다.
+google-oauth*.json
+google_oauth_token.json
+client_secret*.json
+*refresh-token*.json
+credentials/

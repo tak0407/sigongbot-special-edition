@@ -14,6 +14,7 @@ from database.online_retro_attendance import (
     list_attendees,
     record_attendance,
 )
+from database.online_retro_confirmation import find_confirmation, list_confirmed
 from database.retrospective import get_submitted_user_ids
 from database.scheduled_announcements import announcement_sent, mark_announcement_sent
 from utils import tz_now
@@ -34,7 +35,21 @@ def _phase_key(meeting: OnlineRetroMeeting, phase: str) -> str:
     return f"{_announcement_key(meeting)}:{phase}"
 
 
-def _meeting(session_name: str, team_channel: str) -> OnlineRetroMeeting | None:
+def meeting_from_confirmation(confirmation: dict) -> OnlineRetroMeeting:
+    """관리자가 확정한 시간과 Meet 링크를 스케줄러가 쓰는 모임 정보로 바꾼다."""
+    starts_at = datetime.datetime.fromisoformat(confirmation["starts_at"])
+    return OnlineRetroMeeting(
+        session_name=confirmation["session_name"],
+        starts_at=starts_at,
+        notify_at=starts_at
+        - datetime.timedelta(minutes=settings.ONLINE_RETRO_NOTIFY_MINUTES_BEFORE),
+        channel=confirmation["team_channel"],
+        url=confirmation["meet_url"],
+        writing_minutes=settings.ONLINE_RETRO_WRITING_MINUTES,
+    )
+
+
+def _configured_meeting(session_name: str, team_channel: str) -> OnlineRetroMeeting | None:
     return next(
         (
             meeting
@@ -43,6 +58,28 @@ def _meeting(session_name: str, team_channel: str) -> OnlineRetroMeeting | None:
         ),
         None,
     )
+
+
+async def _meeting(session_name: str, team_channel: str) -> OnlineRetroMeeting | None:
+    """확정된 모임을 먼저 보고, 없으면 .env 일정으로 돌아간다."""
+    confirmation = await find_confirmation(
+        session_name=session_name, team_channel=team_channel
+    )
+    if confirmation and confirmation.get("meet_url"):
+        return meeting_from_confirmation(confirmation)
+    return _configured_meeting(session_name, team_channel)
+
+
+async def _scheduled_meetings() -> list[OnlineRetroMeeting]:
+    """.env 일정과 DB 확정 모임을 합친다. 같은 회차·팀이면 확정본이 이긴다."""
+    meetings = {
+        (meeting.session_name, meeting.channel): meeting
+        for meeting in settings.ONLINE_RETRO_MEETINGS
+    }
+    for confirmation in await list_confirmed():
+        meeting = meeting_from_confirmation(confirmation)
+        meetings[(meeting.session_name, meeting.channel)] = meeting
+    return sorted(meetings.values(), key=lambda meeting: meeting.notify_at)
 
 
 def _action_value(meeting: OnlineRetroMeeting) -> str:
@@ -208,7 +245,7 @@ async def handle_online_retro_attendance(
     metadata = json.loads(body["actions"][0]["value"])
     session_name = str(metadata.get("session_name") or "").strip()
     team_channel = str(metadata.get("team_channel") or "").strip()
-    if not session_name or _meeting(session_name, team_channel) is None:
+    if not session_name or await _meeting(session_name, team_channel) is None:
         raise ValueError("현재 설정된 온라인 회고 모임을 찾을 수 없어요.")
     user_id = body["user"]["id"]
     created = await record_attendance(
@@ -235,7 +272,7 @@ async def _participant_action(
 ) -> OnlineRetroMeeting | None:
     user_id = body["user"]["id"]
     metadata = json.loads(body["actions"][0]["value"])
-    meeting = _meeting(
+    meeting = await _meeting(
         str(metadata.get("session_name") or "").strip(),
         str(metadata.get("team_channel") or "").strip(),
     )
@@ -370,7 +407,7 @@ async def handle_open_online_retro_photo_upload(
 ) -> None:
     await ack()
     metadata = json.loads(body["actions"][0]["value"])
-    meeting = _meeting(
+    meeting = await _meeting(
         str(metadata.get("session_name") or "").strip(),
         str(metadata.get("team_channel") or "").strip(),
     )
@@ -406,7 +443,7 @@ async def handle_online_retro_photo_submit(
     ack: AsyncAck, body: dict, client: AsyncWebClient, view: dict
 ) -> None:
     metadata = json.loads(view["private_metadata"])
-    meeting = _meeting(
+    meeting = await _meeting(
         str(metadata.get("session_name") or "").strip(),
         str(metadata.get("team_channel") or "").strip(),
     )
@@ -444,12 +481,17 @@ async def handle_online_retro_photo_submit(
 
 async def run_online_retro_meeting_scheduler(client: AsyncWebClient) -> None:
     logger.info(
-        "온라인 회고 모임 공지 스케줄러가 시작되었습니다 - schedules={}",
+        "온라인 회고 모임 공지 스케줄러가 시작되었습니다 - env_schedules={}",
         len(settings.ONLINE_RETRO_MEETINGS),
     )
     while True:
         now = tz_now()
-        for meeting in settings.ONLINE_RETRO_MEETINGS:
+        try:
+            meetings = await _scheduled_meetings()
+        except Exception:
+            logger.exception("확정된 온라인 회고 모임을 읽지 못했습니다.")
+            meetings = list(settings.ONLINE_RETRO_MEETINGS)
+        for meeting in meetings:
             try:
                 local_now = now.astimezone(meeting.notify_at.tzinfo)
                 if (

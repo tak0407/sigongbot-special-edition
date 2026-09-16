@@ -178,6 +178,45 @@ class MigrationTest(unittest.TestCase):
                 },
             )
 
+    def test_confirmed_meeting_table_blocks_duplicate_events(self):
+        initialize_database()
+        with closing(get_connection()) as connection:
+            self.assertLessEqual(
+                {
+                    "poll_id",
+                    "meeting_date",
+                    "team_channel",
+                    "starts_at",
+                    "ends_at",
+                    "calendar_event_id",
+                    "meet_url",
+                    "status",
+                    "created_at",
+                    "updated_at",
+                },
+                columns(connection, "online_retro_confirmed_meetings"),
+            )
+            connection.execute(
+                "INSERT INTO online_retro_time_polls (id, meeting_date, session_name, team_channel, team_name, slots_json) "
+                "VALUES (1, '2026-10-11', '6기 1회차', 'C11111111', '그린팀', '[]')"
+            )
+            connection.execute(
+                "INSERT INTO online_retro_time_polls (id, meeting_date, session_name, team_channel, team_name, slots_json, is_test) "
+                "VALUES (2, '2026-10-11', '6기 1회차', 'C11111111', '그린팀', '[]', 1)"
+            )
+            insert = (
+                "INSERT INTO online_retro_confirmed_meetings (poll_id, meeting_date, session_name, "
+                "team_channel, team_name, slot, starts_at, ends_at, calendar_event_id, conference_request_id) "
+                "VALUES (?, '2026-10-11', '6기 1회차', 'C11111111', '그린팀', '20:00~21:00', "
+                "'2026-10-11T20:00:00+09:00', '2026-10-11T21:00:00+09:00', 'event-1', 'request-1')"
+            )
+            connection.execute(insert, (1,))
+            # 같은 팀·같은 날짜는 투표가 달라도 두 번 확정되지 않는다.
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(insert, (2,))
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(insert, (1,))
+
     def test_legacy_database_gains_new_columns(self):
         self.legacy_database(("U11111111",))
         initialize_database()

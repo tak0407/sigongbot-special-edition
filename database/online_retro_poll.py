@@ -103,3 +103,37 @@ async def vote_counts(poll_id: int, slots: list[str]) -> tuple[dict[str, int], i
         return counts, len(rows)
 
     return await asyncio.to_thread(select)
+
+
+async def list_polls() -> list[dict]:
+    """관리자 화면용. 투표별 슬롯 집계와 참여 인원을 함께 돌려준다."""
+
+    def select() -> list[dict]:
+        with get_connection() as connection:
+            polls = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT * FROM online_retro_time_polls
+                     ORDER BY meeting_date DESC, team_name
+                    """
+                )
+            ]
+            votes: dict[int, list[str]] = {}
+            for row in connection.execute(
+                "SELECT poll_id, slots_json FROM online_retro_time_votes"
+            ):
+                votes.setdefault(row["poll_id"], []).append(row["slots_json"])
+        for poll in polls:
+            poll["slots"] = json.loads(poll.pop("slots_json"))
+            counts = {slot: 0 for slot in poll["slots"]}
+            raw_votes = votes.get(poll["id"], [])
+            for payload in raw_votes:
+                for slot in json.loads(payload):
+                    if slot in counts:
+                        counts[slot] += 1
+            poll["counts"] = counts
+            poll["voters"] = len(raw_votes)
+        return polls
+
+    return await asyncio.to_thread(select)

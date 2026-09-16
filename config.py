@@ -3,6 +3,8 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 if os.getenv("ENV", "dev") == "dev":
@@ -125,6 +127,74 @@ def parse_online_retro_meetings(value: str) -> list[OnlineRetroMeeting]:
     return sorted(meetings, key=lambda meeting: meeting.notify_at)
 
 
+@dataclass(frozen=True)
+class GoogleCredentials:
+    """Calendar/Meet 호출에 쓰는 운영자 Google 계정 자격증명."""
+
+    client_id: str
+    client_secret: str
+    refresh_token: str
+
+
+def parse_google_token_file(path: str) -> dict:
+    """Git 비추적 인증 저장소(JSON)를 읽는다. 없으면 빈 dict를 돌려준다."""
+    if not path:
+        return {}
+    token_path = Path(path).expanduser()
+    if not token_path.exists():
+        return {}
+    try:
+        payload = json.loads(token_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Google 인증 파일을 읽을 수 없습니다: {path}") from error
+    if not isinstance(payload, dict):
+        raise ValueError("Google 인증 파일은 JSON 객체여야 합니다.")
+    # gcloud/oauth2l이 남기는 installed 래핑도 그대로 받아 준다.
+    installed = payload.get("installed")
+    if isinstance(installed, dict):
+        payload = {**installed, **{k: v for k, v in payload.items() if k != "installed"}}
+    return payload
+
+
+MEET_ACCESS_TYPES = ("OPEN", "TRUSTED", "RESTRICTED")
+
+
+def parse_meet_access_type(value: str) -> str:
+    value = value.strip().upper()
+    if value and value not in MEET_ACCESS_TYPES:
+        raise ValueError(
+            "GOOGLE_MEET_ACCESS_TYPE은 OPEN, TRUSTED, RESTRICTED 중 하나여야 합니다."
+        )
+    return value
+
+
+def parse_team_attendees(value: str) -> dict[str, list[str]]:
+    """팀 채널별로 Calendar 초대에 넣을 이메일 목록을 읽는다."""
+    if not value.strip():
+        return {}
+    try:
+        raw = json.loads(value)
+    except json.JSONDecodeError:
+        raise ValueError("ONLINE_RETRO_TEAM_ATTENDEES는 JSON 객체여야 합니다.") from None
+    if not isinstance(raw, dict):
+        raise ValueError("ONLINE_RETRO_TEAM_ATTENDEES는 JSON 객체여야 합니다.")
+    attendees: dict[str, list[str]] = {}
+    for channel, emails in raw.items():
+        if not re.fullmatch(r"[CG][A-Z0-9]{8,}", str(channel)):
+            raise ValueError("ONLINE_RETRO_TEAM_ATTENDEES의 채널 ID를 확인하세요.")
+        if not isinstance(emails, list):
+            raise ValueError("ONLINE_RETRO_TEAM_ATTENDEES의 값은 이메일 목록이어야 합니다.")
+        cleaned = []
+        for email in emails:
+            email = str(email).strip()
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+                raise ValueError(f"ONLINE_RETRO_TEAM_ATTENDEES의 이메일을 확인하세요: {email}")
+            cleaned.append(email)
+        if cleaned:
+            attendees[str(channel)] = cleaned
+    return attendees
+
+
 class Settings:
     def __init__(self):
         self.ENV: str = os.getenv("ENV", "dev")
@@ -176,5 +246,58 @@ class Settings:
         self.AI_REVIEW_TIMEOUT_SECONDS: int = int(
             os.getenv("AI_REVIEW_TIMEOUT_SECONDS", "180")
         )
+
+        # Google Calendar/Meet 연동. 자격증명은 .env 또는 Git 비추적 인증 파일에만 둔다.
+        self.GOOGLE_OAUTH_CLIENT_ID: str = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+        self.GOOGLE_OAUTH_CLIENT_SECRET: str = os.getenv(
+            "GOOGLE_OAUTH_CLIENT_SECRET", ""
+        ).strip()
+        self.GOOGLE_OAUTH_REFRESH_TOKEN: str = os.getenv(
+            "GOOGLE_OAUTH_REFRESH_TOKEN", ""
+        ).strip()
+        self.GOOGLE_OAUTH_TOKEN_FILE: str = os.getenv(
+            "GOOGLE_OAUTH_TOKEN_FILE", ""
+        ).strip()
+        self.GOOGLE_CALENDAR_ID: str = os.getenv(
+            "GOOGLE_CALENDAR_ID", "primary"
+        ).strip() or "primary"
+        self.GOOGLE_CALENDAR_TIMEZONE: str = os.getenv(
+            "GOOGLE_CALENDAR_TIMEZONE", "Asia/Seoul"
+        ).strip() or "Asia/Seoul"
+        self.GOOGLE_MEET_ACCESS_TYPE: str = parse_meet_access_type(
+            os.getenv("GOOGLE_MEET_ACCESS_TYPE", "")
+        )
+        self.ONLINE_RETRO_TEAM_ATTENDEES: dict[str, list[str]] = parse_team_attendees(
+            os.getenv("ONLINE_RETRO_TEAM_ATTENDEES", "")
+        )
+        self.ONLINE_RETRO_NOTIFY_MINUTES_BEFORE: int = int(
+            os.getenv("ONLINE_RETRO_NOTIFY_MINUTES_BEFORE", "10")
+        )
+        self.ONLINE_RETRO_WRITING_MINUTES: int = int(
+            os.getenv("ONLINE_RETRO_WRITING_MINUTES", "20")
+        )
+        if not 0 <= self.ONLINE_RETRO_NOTIFY_MINUTES_BEFORE <= 1440:
+            raise ValueError("ONLINE_RETRO_NOTIFY_MINUTES_BEFORE는 0~1440이어야 합니다.")
+        if not 15 <= self.ONLINE_RETRO_WRITING_MINUTES <= 20:
+            raise ValueError("ONLINE_RETRO_WRITING_MINUTES는 15~20이어야 합니다.")
+
+    def google_credentials(self) -> GoogleCredentials | None:
+        """.env 값을 먼저 보고, 없으면 인증 파일에서 채운다. 부족하면 None."""
+        stored = parse_google_token_file(self.GOOGLE_OAUTH_TOKEN_FILE)
+        client_id = self.GOOGLE_OAUTH_CLIENT_ID or str(stored.get("client_id", "")).strip()
+        client_secret = (
+            self.GOOGLE_OAUTH_CLIENT_SECRET or str(stored.get("client_secret", "")).strip()
+        )
+        refresh_token = (
+            self.GOOGLE_OAUTH_REFRESH_TOKEN or str(stored.get("refresh_token", "")).strip()
+        )
+        if not (client_id and client_secret and refresh_token):
+            return None
+        return GoogleCredentials(
+            client_id=client_id,
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+        )
+
 
 settings = Settings()

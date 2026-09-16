@@ -92,12 +92,13 @@ async def main():
             lambda: run_session_announcement_scheduler(slack_app.client),
         )
     ) if settings.ENV == "prod" else None
+    # 확정된 모임은 DB에서 읽으므로 .env 일정이 비어 있어도 스케줄러를 띄운다.
     meeting_task = asyncio.create_task(
         supervise(
             "온라인 모임 스케줄러",
             lambda: run_online_retro_meeting_scheduler(slack_app.client),
         )
-    ) if settings.ENV == "prod" and settings.ONLINE_RETRO_MEETINGS else None
+    ) if settings.ENV == "prod" else None
     reminder_task = asyncio.create_task(
         supervise(
             "미제출 리마인더 스케줄러",

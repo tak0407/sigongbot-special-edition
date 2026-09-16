@@ -404,6 +404,48 @@ def _submission_announcement_messages(connection: sqlite3.Connection) -> None:
     """)
 
 
+def _online_retro_confirmed_meetings(connection: sqlite3.Connection) -> None:
+    """확정된 팀별 모임 시간과 Google Calendar/Meet 생성 결과를 저장한다.
+
+    poll_id와 (meeting_date, team_channel, is_test) 양쪽에 UNIQUE를 걸어,
+    재시도나 동시 요청에서도 같은 팀·같은 날짜에 이벤트가 두 번 만들어지지 않게 한다.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS online_retro_confirmed_meetings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            poll_id INTEGER NOT NULL UNIQUE
+                REFERENCES online_retro_time_polls(id) ON DELETE CASCADE,
+            meeting_date TEXT NOT NULL,
+            session_name TEXT NOT NULL,
+            team_channel TEXT NOT NULL,
+            team_name TEXT NOT NULL,
+            slot TEXT NOT NULL,
+            starts_at TEXT NOT NULL,
+            ends_at TEXT NOT NULL,
+            calendar_event_id TEXT NOT NULL,
+            conference_request_id TEXT NOT NULL,
+            meet_url TEXT,
+            meet_access_type TEXT,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'confirmed', 'failed', 'cancelled')),
+            last_error TEXT,
+            announced_slack_ts TEXT,
+            is_test INTEGER NOT NULL DEFAULT 0 CHECK (is_test IN (0, 1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(meeting_date, team_channel, is_test)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS online_retro_confirmed_meetings_schedule_idx
+            ON online_retro_confirmed_meetings(status, starts_at)
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -417,6 +459,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (10, "session_announcements", _session_announcements),
     (11, "submission_announcement_messages", _submission_announcement_messages),
     (12, "bot_improvement_suggestions", _bot_improvement_suggestions),
+    (13, "online_retro_confirmed_meetings", _online_retro_confirmed_meetings),
 )
 
 
