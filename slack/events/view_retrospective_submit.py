@@ -14,6 +14,7 @@ from database.retrospective import (
 )
 from database.guided_reflection import delete_guided_reflection
 from exception import RetrospectiveAlreadySubmitted
+from slack.ephemeral import post_ephemeral
 from utils import save_temp_retrospective, cleanup_temp_files
 
 
@@ -268,7 +269,8 @@ async def handle_view_retrospective_submit(
         else:
             channel_id = locals().get("original_channel_id")
             if channel_id:
-                await client.chat_postEphemeral(
+                await post_ephemeral(
+                    client,
                     channel=channel_id,
                     user=user_id,
                     text="회고 게시 중 오류가 발생했어요. 작성 내용은 임시 저장했습니다.",

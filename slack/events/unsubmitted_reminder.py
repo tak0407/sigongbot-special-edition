@@ -21,6 +21,7 @@ from alerts import build_alert, send_alert
 from config import settings
 from database.retrospective import get_submitted_user_ids
 from database.scheduled_announcements import announcement_sent, mark_announcement_sent
+from slack.ephemeral import post_ephemeral
 from utils import get_current_session_info, tz_now
 
 # 마감 8시간 전부터 마감까지가 발송 창이다. 마감이 화요일 05:00이면 월요일 21:00에 나간다.
@@ -168,7 +169,8 @@ async def send_unsubmitted_reminders(
             try:
                 # ephemeral도 본인에게만 보이므로 공개 노출은 없다. 다만 새로고침하면
                 # 사라지므로 폴백이 쓰였다는 사실 자체를 운영 알림으로 올린다.
-                await client.chat_postEphemeral(
+                await post_ephemeral(
+                    client,
                     channel=team_channel, user=user_id, text=text, blocks=blocks
                 )
             except Exception as fallback_error:

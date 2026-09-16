@@ -4,6 +4,7 @@ from config import settings
 from database import check_user_submitted_this_session
 from database.sessions import get_session
 from slack.events.view_retrospective_submit import _is_test_session
+from slack.ephemeral import post_ephemeral
 from utils import get_current_session_info, tz_now
 
 
@@ -35,7 +36,7 @@ async def open_submission_entry(
         session_name = get_current_session_info()[1]
     error = await submission_preflight(user_id, session_name)
     if error:
-        await client.chat_postEphemeral(channel=channel_id, user=user_id, text=error)
+        await post_ephemeral(client, channel=channel_id, user=user_id, text=error)
         return
 
     from slack.events.test_announcement import build_method_selection_view, _team_channels

@@ -16,6 +16,7 @@ from database.guided_reflection import (
 )
 from reflection_questions import select_reflection_questions
 from utils import get_latest_temp_retrospective
+from slack.ephemeral import post_ephemeral
 from slack.events.command_retrospective import build_retrospective_view
 
 
@@ -226,7 +227,8 @@ async def handle_post_test_announcement(
             },
         ],
     )
-    await client.chat_postEphemeral(
+    await post_ephemeral(
+        client,
         channel=channel_id,
         user=user_id,
         text="테스트 회차 공지를 보냈어요.",
@@ -363,7 +365,8 @@ async def _finish_guided_formatting(*, client: AsyncWebClient, flow_id: str) -> 
 
     try:
         await save_guided_format(flow_id=flow_id, formatted=formatted)
-        await client.chat_postEphemeral(
+        await post_ephemeral(
+            client,
             channel=flow["slack_channel"],
             user=flow["user_id"],
             text=notice,
@@ -491,7 +494,8 @@ async def handle_open_guided_result(
         or flow["user_id"] != body["user"]["id"]
         or flow["formatted"] is None
     ):
-        await client.chat_postEphemeral(
+        await post_ephemeral(
+            client,
             channel=body["channel"]["id"],
             user=body["user"]["id"],
             text="정리된 회고를 찾지 못했어요. 다시 질문형 회고를 시작해 주세요.",

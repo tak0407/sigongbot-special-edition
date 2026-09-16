@@ -14,6 +14,7 @@ from database.online_retro_poll import (
     save_vote,
     vote_counts,
 )
+from slack.ephemeral import post_ephemeral
 
 TIME_SLOTS = [
     "18:00~19:00",
@@ -105,7 +106,8 @@ async def handle_open_time_poll(
         raise ValueError("시간 투표를 찾을 수 없어요.")
     user_id = body["user"]["id"]
     if not poll["is_test"] and settings.SUBMISSION_DESTINATIONS.get(user_id) != poll["team_channel"]:
-        await client.chat_postEphemeral(
+        await post_ephemeral(
+            client,
             channel=body["channel"]["id"],
             user=user_id,
             text="자신이 배정된 팀의 시간 투표에만 참여할 수 있어요.",
@@ -178,7 +180,8 @@ async def handle_time_poll_submit(
             text=f"{poll['team_name']} 온라인 회고 시간 투표",
             blocks=build_poll_blocks(poll, counts, voters),
         )
-    await client.chat_postEphemeral(
+    await post_ephemeral(
+        client,
         channel=poll["team_channel"],
         user=user_id,
         text=f"투표를 저장했어요: {', '.join(slots)}",
