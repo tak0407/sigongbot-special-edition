@@ -4,6 +4,7 @@ Uses only the existing fake Slack / temporary database fixture.
 """
 import os
 import unittest
+from unittest.mock import patch
 from urllib.parse import quote
 
 import test_dashboard as fixtures
@@ -37,6 +38,12 @@ class MobileBrowserTest(fixtures.AdminWebTestCase):
     async def test_mobile_and_desktop_layout_and_controls(self):
         from playwright.async_api import async_playwright
 
+        self.enterContext(patch.object(fixtures.settings, "SUBMISSION_CHANNEL_CHOOSER_IDS", ["U33333333"]))
+        with get_connection() as connection:
+            connection.execute(
+                """INSERT INTO retrospectives (user_id, session_name, slack_channel, good_points, slack_ts, improvements, learnings, action_item)
+                   VALUES ('U33333333', '6기 1회차', 'C11111111', '별도 제출', '3.0', '', '', '')"""
+            )
         # Include unbroken content and a future editable schedule.
         long_text = "긴문자열https://example.invalid/" + "x" * 500
         with get_connection() as connection:

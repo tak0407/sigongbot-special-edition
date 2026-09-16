@@ -12,7 +12,7 @@ from loguru import logger
 from dashboard import layout
 from dashboard.announcement import PLACEHOLDER_HELP, state
 from dashboard.auth import csrf_token, require_admin
-from dashboard.common import KST, rows
+from dashboard.common import KST, rows, separate_submission_count
 from database.sessions import (
     MAX_ANNOUNCEMENT_LENGTH,
     ScheduleError,
@@ -106,7 +106,7 @@ def _schedule_rows(request, data: dict) -> str:
             f"<td>{escape(row['name'])}</td>"
             f"<td>{row['due'].strftime('%Y-%m-%d %H:%M')} ({'월화수목금토일'[row['due'].weekday()]})</td>"
             f"<td>{status}</td>"
-            f"<td>{row['submitters']}명</td>"
+            f"<td>{row['submitters']}명{separate_submission_count(row['separate_submissions'])}</td>"
             f"<td>{row['announcement_state']} <a href=\"{link}\">문구</a></td>"
             f"<td>{_due_form(request, row)}</td>"
             "</tr>"

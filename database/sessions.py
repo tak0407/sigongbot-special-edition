@@ -12,6 +12,7 @@ import threading
 from loguru import logger
 
 from database.sqlite import get_connection
+from database.submission_stats import session_submission_counts
 
 # 회차 이름은 회고 행에 문자열로 박히는 조인 키라 길이와 모양을 좁게 잡는다.
 NAME_PATTERN = re.compile(r"^[0-9A-Za-z가-힣][0-9A-Za-z가-힣 ]{0,30}$")
@@ -70,15 +71,20 @@ def list_sessions() -> list[dict]:
     with get_connection() as connection:
         found = connection.execute(
             """
-            SELECT s.name, s.due_at, s.announce_at, s.announcement, s.announced_at,
-                   (SELECT COUNT(*) FROM retrospectives r
-                     WHERE r.session_name = s.name AND r.is_test_submission = 0)
-                   AS submissions
+            SELECT s.name, s.due_at, s.announce_at, s.announcement, s.announced_at
               FROM sessions s
              ORDER BY s.due_at, s.name
             """
         ).fetchall()
-    return [{**_session(row), "submissions": row["submissions"]} for row in found]
+        counts = {row["session_name"]: row for row in session_submission_counts(connection)}
+    return [
+        {
+            **_session(row),
+            "submissions": counts.get(row["name"], {}).get("submitters", 0),
+            "separate_submissions": counts.get(row["name"], {}).get("separate_submitters", 0),
+        }
+        for row in found
+    ]
 
 
 def _validate_name(name: str) -> str:

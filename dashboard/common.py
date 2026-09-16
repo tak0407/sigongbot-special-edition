@@ -69,3 +69,17 @@ def page_numbers(total: int, page: int, size: int = PAGE_SIZE) -> tuple[int, int
     """(마지막 페이지 번호, 정규화된 현재 페이지)를 돌려준다."""
     last = max(1, (total + size - 1) // size)
     return last, min(max(page, 1), last)
+
+
+def separate_submission_badge(user_id: str) -> str:
+    from database.submission_stats import separate_submitter_ids
+
+    if user_id in separate_submitter_ids():
+        return '<div class="pill">별도 제출 · 집계 제외</div>'
+    return ""
+
+
+def separate_submission_count(count: int) -> str:
+    if count:
+        return f'<div class="sub">별도 제출 {count}명 · 집계 제외</div>'
+    return ""

@@ -15,8 +15,9 @@ from constants import DUE_DATES, SESSION_NAMES
 from dashboard import directory as slack_directory
 from dashboard import layout
 from dashboard.auth import require_admin
-from dashboard.common import rows, to_kst
+from dashboard.common import rows, to_kst, separate_submission_badge
 from database.sqlite import get_connection
+from database.submission_stats import separate_submitter_ids
 from utils import get_current_session_info, tz_now
 
 # 표에 점으로 찍어 줄 최근 회차 수. 너무 길면 한 줄을 넘어간다.
@@ -103,17 +104,20 @@ def _collect() -> dict:
             }
         )
 
+    separate = separate_submitter_ids()
+    counted = [member for member in members if member["user_id"] not in separate]
     # 연속 미제출이 긴 사람부터, 같으면 제출률이 낮은 사람부터 보여 준다.
     members.sort(key=lambda member: (-member["streak"], member["rate"], member["user_id"]))
-    at_risk = [member for member in members if member["streak"] >= AT_RISK_MISSES]
-    never = [member for member in members if not submitted.get(member["user_id"])]
+    at_risk = [member for member in counted if member["streak"] >= AT_RISK_MISSES]
+    never = [member for member in counted if not submitted.get(member["user_id"])]
     average = (
-        round(sum(member["rate"] for member in members) / len(members) * 100)
-        if members
+        round(sum(member["rate"] for member in counted) / len(counted) * 100)
+        if counted
         else 0
     )
     return {
         "members": members,
+        "counted": len(counted),
         "sessions": sessions,
         "current_name": current_name,
         "is_active": is_active,
@@ -158,6 +162,9 @@ def _member_rows(data: dict, directory: dict) -> str:
         else:
             streak_cell = '<span class="done">-</span>'
 
+        if member["user_id"] in separate_submitter_ids():
+            streak_cell = "집계 제외"
+
         if member["last_at"]:
             last = (
                 f'{escape(member["last_session"])}'
@@ -168,7 +175,7 @@ def _member_rows(data: dict, directory: dict) -> str:
 
         items.append(
             "<tr>"
-            f"<td>{slack_directory.user_cell(directory, member['user_id'])}</td>"
+            f"<td>{slack_directory.user_cell(directory, member['user_id'])}{separate_submission_badge(member['user_id'])}</td>"
             f"<td>{team}</td>"
             f"<td>{current}</td>"
             f"<td>{member['done']} / {member['total']}"
@@ -198,7 +205,7 @@ async def handle(request: web.Request) -> web.Response:
     never_card = "card alert" if data["never"] else "card"
     body = f"""
 <section class="cards">
-<div class="card">집계 대상<div class="number">{len(data['members'])}명</div><small>명단 {data['roster']}명 · {escape(scope)}</small></div>
+<div class="card">집계 대상<div class="number">{data['counted']}명</div><small>명단 {data['roster']}명 · {escape(scope)}</small></div>
 <div class="card">평균 제출률<div class="number">{data['average']}%</div><small>마감된 회차만 셉니다</small></div>
 <div class="{at_risk_card}">이탈 위험<div class="number">{data['at_risk']}명</div><small>{AT_RISK_MISSES}회 이상 연속 미제출</small></div>
 <div class="{never_card}">제출 이력 없음<div class="number">{data['never']}명</div><small>한 번도 제출하지 않음</small></div>

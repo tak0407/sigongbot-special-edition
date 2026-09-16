@@ -199,3 +199,10 @@ ENV=prod DASHBOARD_BROWSER_TESTS=1 python -m unittest discover -s tests -v
 화면 크기 전환과 JavaScript가 꺼진 환경의 메뉴도 확인합니다.
 선택적으로 `DASHBOARD_SCREENSHOTS=/tmp/dashboard-mobile`을 지정하면 320px 스크린샷을 남깁니다.
 실제 휴대전화의 Safari·가상 키보드 및 운영 Slack 연결은 이 검사에 포함되지 않습니다.
+
+관리자 제출 집계에서 팀에 배정되지 않은 `SUBMISSION_CHANNEL_CHOOSER_IDS` 계정은
+‘별도 제출 · 집계 제외’로 표시합니다. 이번 회차 제출 수, 회차별 추이, 일정의 제출자 수,
+멤버 요약 지표에서 제외하며 회고 본문과 개별 참여 이력은 보존합니다.
+팀원으로 배정된 채널 선택 계정은 일반 멤버로 집계합니다.
+테스트 제출은 제출 현황·추이·일정의 운영 제출 수에 포함하지 않습니다.
+회고 열람의 검색 결과 건수는 별도 제출을 포함한 실제 기록 수입니다.

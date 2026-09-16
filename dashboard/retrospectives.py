@@ -14,6 +14,7 @@ from dashboard import layout
 from dashboard.auth import require_admin
 from dashboard.common import PAGE_SIZE, page_numbers, rows, to_kst, truncate
 from database.sqlite import get_connection
+from dashboard.common import separate_submission_badge
 
 PREVIEW_LENGTH = 70
 
@@ -109,7 +110,7 @@ def _list_rows(data: dict, directory: dict) -> str:
         items.append(
             "<tr>"
             f"<td>{slack_directory.message_cell(directory, row['slack_channel'], row['slack_ts'], to_kst(row['created_at']))}</td>"
-            f"<td>{slack_directory.user_cell(directory, row['user_id'])}</td>"
+            f"<td>{slack_directory.user_cell(directory, row['user_id'])}{separate_submission_badge(row['user_id'])}</td>"
             f"<td>{escape(row['session_name'])}</td>"
             f"<td>{slack_directory.channel_cell(directory, row['slack_channel'])}</td>"
             f"<td>{score if score is not None else '-'}</td>"
@@ -180,7 +181,7 @@ async def handle_detail(request: web.Request) -> web.Response:
 <p><a href="/retrospectives">← 목록으로</a></p>
 <table class="detail-table"><tbody>
 <tr><th>ID</th><td>{row['id']}</td></tr>
-<tr><th>작성자</th><td>{slack_directory.user_cell(directory, row['user_id'])}</td></tr>
+<tr><th>작성자</th><td>{slack_directory.user_cell(directory, row['user_id'])}{separate_submission_badge(row['user_id'])}</td></tr>
 <tr><th>회차</th><td>{escape(row['session_name'])}</td></tr>
 <tr><th>제출 시각</th><td>{slack_directory.message_cell(directory, row['slack_channel'], row['slack_ts'], to_kst(row['created_at']))} (KST)</td></tr>
 <tr><th>채널</th><td>{slack_directory.channel_cell(directory, row['slack_channel'])}</td></tr>

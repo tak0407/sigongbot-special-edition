@@ -9,8 +9,11 @@ from config import settings
 from dashboard import directory as slack_directory
 from dashboard import layout
 from dashboard.auth import require_admin
-from dashboard.common import REFRESH_SECONDS, rows, to_kst
+from dashboard.common import (
+    REFRESH_SECONDS, rows, to_kst, separate_submission_badge, separate_submission_count,
+)
 from database.sqlite import get_connection
+from database.submission_stats import separate_submitter_ids, session_submission_counts
 from utils import format_remaining_time, get_current_session_info, tz_now
 
 RECENT_LIMIT = 10
@@ -41,7 +44,7 @@ def _collect() -> dict:
         submitted = {
             row["user_id"]
             for row in connection.execute(
-                "SELECT DISTINCT user_id FROM retrospectives WHERE session_name = ?",
+                "SELECT DISTINCT user_id FROM retrospectives WHERE session_name = ? AND is_test_submission = 0",
                 (session_name,),
             )
         }
@@ -59,31 +62,23 @@ def _collect() -> dict:
             """,
             (RECENT_LIMIT,),
         ).fetchall()
-        trend = connection.execute(
-            """
-            SELECT session_name,
-                   COUNT(DISTINCT user_id) AS submitters,
-                   MAX(created_at) AS last_at
-              FROM retrospectives
-             GROUP BY session_name
-             ORDER BY last_at DESC, session_name DESC
-             LIMIT ?
-            """,
-            (TREND_LIMIT,),
-        ).fetchall()
+        trend = session_submission_counts(connection)[:TREND_LIMIT]
+    separate = submitted & separate_submitter_ids()
+    submitted -= separate
     return {
         "session_name": session_name or "진행 중인 회차 없음",
         "status": "진행 중" if is_active else "마감",
         "remaining": format_remaining_time(remaining) if is_active else "-",
         "submitted": len(submitted),
+        "separate": sorted(separate),
         "expected": len(expected),
         "missing": max(0, len(expected - submitted)),
-        # 팀 배정이 없는 제출(테스트 계정 등)은 팀별 표에 잡히지 않으므로 따로 센다.
+        # 별도 제출 계정을 제외한 팀 미배정 제출은 배정 누락 점검용으로 센다.
         "unassigned": len(submitted - expected),
         "teams": _team_breakdown(destinations, submitted),
         "pending_posts": pending_posts,
         "recent": [dict(row) for row in recent],
-        "trend": list(reversed([dict(row) for row in trend])),
+        "trend": list(reversed(trend)),
         "generated_at": tz_now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -121,7 +116,7 @@ def _trend_rows(data: dict) -> str:
         items.append(
             "<tr>"
             f"<td>{escape(row['session_name'])}</td>"
-            f"<td>{row['submitters']}명</td>"
+            f"<td>{row['submitters']}명{separate_submission_count(row['separate_submitters'])}</td>"
             f'<td class="bar"><span style="width:{width}%"></span></td>'
             "</tr>"
         )
@@ -131,7 +126,7 @@ def _trend_rows(data: dict) -> str:
 def _recent_rows(data: dict, directory: dict) -> str:
     items = [
         "<tr>"
-        f"<td>{slack_directory.user_cell(directory, row['user_id'])}</td>"
+        f"<td>{slack_directory.user_cell(directory, row['user_id'])}{separate_submission_badge(row['user_id'])}</td>"
         f"<td>{escape(row['session_name'])}</td>"
         f"<td>{slack_directory.message_cell(directory, row['slack_channel'], row['slack_ts'], to_kst(row['created_at']))}</td>"
         f"<td>{slack_directory.channel_cell(directory, row['slack_channel'])}</td>"
@@ -151,12 +146,21 @@ async def handle(request: web.Request) -> web.Response:
     unassigned = (
         f" · 팀 미배정 제출 {data['unassigned']}건" if data["unassigned"] else ""
     )
+    separate_card = ""
+    if data["separate"]:
+        names = ", ".join(slack_directory.user_label(directory, uid) for uid in data["separate"])
+        separate_card = (
+            '<div class="card">별도 제출'
+            f'<div class="number">{len(data["separate"])}명</div>'
+            f'<small>{escape(names)} · 제출 수 집계 제외</small></div>'
+        )
     pending_posts_card = "card alert" if data["pending_posts"] else "card"
     body = f"""
 <section class="cards">
 <div class="card">현재 회차<div class="number">{escape(data['session_name'])}</div><small>{data['status']} · 마감까지 {data['remaining']}</small></div>
 <div class="card">제출 현황<div class="number">{data['submitted']} / {data['expected']}</div><small>미제출 {data['missing']}명{unassigned}</small></div>
 <div class="{pending_posts_card}">게시 기록 미확인<div class="number">{data['pending_posts']}건</div><small>Slack 게시 후 상태 기록이 끝나지 않은 회고</small></div>
+{separate_card}
 </section>
 <h2>팀별 제출 현황</h2><small>미제출자는 Slack에 그대로 붙여 넣으면 멘션으로 바뀝니다.</small>
 <p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>채널</th><th>제출</th><th>미제출</th><th>미제출자</th></tr></thead><tbody>{_team_rows(data, directory)}</tbody></table></div>
