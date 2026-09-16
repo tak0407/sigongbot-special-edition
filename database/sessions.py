@@ -348,7 +348,10 @@ def pending_announcements(now: datetime.datetime) -> list[dict]:
     return ready
 
 
-def mark_announced(name: str, sent_at: datetime.datetime) -> bool:
+def mark_announced(
+    name: str, sent_at: datetime.datetime, *,
+    channel_id: str | None = None, message_ts: str | None = None, body: str = "",
+) -> bool:
     """공지 발송을 기록한다. 이미 기록돼 있으면 False."""
     with get_connection() as connection:
         changed = connection.execute(
@@ -356,4 +359,30 @@ def mark_announced(name: str, sent_at: datetime.datetime) -> bool:
             " WHERE name = ? AND announced_at IS NULL",
             (sent_at.isoformat(), name),
         ).rowcount
+        if changed and channel_id and message_ts:
+            connection.execute(
+                "INSERT INTO submission_announcement_messages"
+                " (session_name, channel_id, message_ts, body) VALUES (?, ?, ?, ?)",
+                (name, channel_id, message_ts, body),
+            )
     return changed > 0
+
+
+def announcements_to_close(now: datetime.datetime) -> list[dict]:
+    """Persisted messages whose current session deadline has passed."""
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT m.*, s.due_at FROM submission_announcement_messages m"
+            " JOIN sessions s ON s.name = m.session_name WHERE m.closed_at IS NULL"
+        ).fetchall()
+    return [dict(row) for row in rows
+            if datetime.datetime.fromisoformat(row["due_at"]) <= now]
+
+
+def mark_announcement_closed(session_name: str, now: datetime.datetime) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE submission_announcement_messages SET closed_at = ?"
+            " WHERE session_name = ? AND closed_at IS NULL",
+            (now.isoformat(), session_name),
+        )
