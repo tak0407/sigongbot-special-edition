@@ -8,6 +8,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from config import settings
 from database.suggestions import create_suggestion
+from slack.ephemeral import post_ephemeral
 from slack.types import CommandBodyType, ViewBodyType, ViewType
 
 CATEGORIES = {
@@ -78,7 +79,7 @@ async def _notify_user(
     client: AsyncWebClient, *, channel: str, user_id: str, text: str
 ) -> None:
     try:
-        await client.chat_postEphemeral(channel=channel, user=user_id, text=text)
+        await post_ephemeral(client, channel=channel, user=user_id, text=text)
     except Exception as error:
         logger.bind(alert=False).warning(
             "제안 제출 결과 안내 실패 - user_id={}, channel={}, error_type={}",

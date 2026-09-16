@@ -16,6 +16,7 @@ from database.online_retro_attendance import (
 )
 from database.retrospective import get_submitted_user_ids
 from database.scheduled_announcements import announcement_sent, mark_announcement_sent
+from slack.ephemeral import post_ephemeral
 from utils import tz_now
 
 LATE_ANNOUNCEMENT_GRACE = datetime.timedelta(hours=1)
@@ -214,7 +215,8 @@ async def handle_online_retro_attendance(
     created = await record_attendance(
         session_name=session_name, team_channel=team_channel, user_id=user_id
     )
-    await client.chat_postEphemeral(
+    await post_ephemeral(
+        client,
         channel=body["channel"]["id"],
         user=user_id,
         text=(
@@ -246,7 +248,8 @@ async def _participant_action(
         team_channel=meeting.channel,
         user_id=user_id,
     ):
-        await client.chat_postEphemeral(
+        await post_ephemeral(
+            client,
             channel=body["channel"]["id"],
             user=user_id,
             text=f"먼저 출석 체크를 해야 {action_name}을 진행할 수 있어요.",
@@ -267,7 +270,8 @@ async def handle_start_online_retro_sharing(
     async with _phase_lock:
         key = _phase_key(meeting, "sharing")
         if await announcement_sent(key):
-            await client.chat_postEphemeral(
+            await post_ephemeral(
+                client,
                 channel=meeting.channel,
                 user=body["user"]["id"],
                 text="회고 공유 단계는 이미 시작됐어요.",
@@ -327,7 +331,8 @@ async def handle_start_online_retro_photo(
     async with _phase_lock:
         key = _phase_key(meeting, "photo")
         if await announcement_sent(key):
-            await client.chat_postEphemeral(
+            await post_ephemeral(
+                client,
                 channel=meeting.channel,
                 user=body["user"]["id"],
                 text="인증샷 안내는 이미 보냈어요.",

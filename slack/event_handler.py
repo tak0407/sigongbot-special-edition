@@ -56,6 +56,7 @@ from slack.events.online_retro_meeting import (
     handle_start_online_retro_sharing,
 )
 from slack.events.online_retro_poll import handle_open_time_poll, handle_time_poll_submit
+from slack.ephemeral import handle_dismiss_ephemeral
 
 
 # Slack events are received exclusively through Socket Mode, so HTTP request
@@ -201,6 +202,7 @@ app.action("open_online_retro_photo_upload")(
 app.view("online_retro_photo_submit")(handle_online_retro_photo_submit)
 app.action("open_online_retro_time_poll")(handle_open_time_poll)
 app.view("online_retro_time_poll_submit")(handle_time_poll_submit)
+app.action("dismiss_ephemeral")(handle_dismiss_ephemeral)
 
 # my retrospectives
 app.command("/내회고")(handle_command_my_retrospectives)
