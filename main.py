@@ -28,6 +28,9 @@ try:
     from slack.event_handler import app as slack_app
     from slack.session_announcement import run_session_announcement_scheduler
     from slack.events.online_retro_meeting import run_online_retro_meeting_scheduler
+    from slack.events.unsubmitted_reminder import (
+        run_unsubmitted_reminder_scheduler,
+    )
 except Exception:
     logger.exception("시공봇 설정을 불러오지 못해 시작할 수 없습니다.")
     raise
@@ -95,6 +98,12 @@ async def main():
             lambda: run_online_retro_meeting_scheduler(slack_app.client),
         )
     ) if settings.ENV == "prod" and settings.ONLINE_RETRO_MEETINGS else None
+    reminder_task = asyncio.create_task(
+        supervise(
+            "미제출 리마인더 스케줄러",
+            lambda: run_unsubmitted_reminder_scheduler(slack_app.client),
+        )
+    ) if settings.ENV == "prod" and settings.SUBMISSION_DESTINATIONS else None
 
     try:
         # HTTP 서버 시작
@@ -115,6 +124,9 @@ async def main():
         if meeting_task:
             meeting_task.cancel()
             tasks.append(meeting_task)
+        if reminder_task:
+            reminder_task.cancel()
+            tasks.append(reminder_task)
         await asyncio.gather(*tasks, return_exceptions=True)
         await handler.close_async()
         await runner.cleanup()
