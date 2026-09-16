@@ -30,15 +30,24 @@ Docker가 없다면 현재 Ubuntu 버전에 맞는 Docker 공식 설치 문서�
 
 ## 2. 저장소 준비
 
-기본 설치 경로는 `~/apps/sigongbot-special-edition`이다. 기존 디렉터리가 있으면 덮어쓰거나 삭제하지 말고 Git 상태를 먼저 확인한다.
+운영 저장소는 이미 `~/sigongbot-special-edition`에 있다. 새로 클론하지 말고 이 경로를 쓴다.
 
 ```bash
-mkdir -p ~/apps
-cd ~/apps
-git clone https://github.com/tak0407/sigongbot-special-edition.git
-cd sigongbot-special-edition
+cd ~/sigongbot-special-edition
 git status --short
 git log -1 --oneline
+git branch --show-current
+```
+
+다른 경로에 두 번째 체크아웃을 만들어 컨테이너를 띄우면 같은 Slack App 토큰으로 봇이 두 개 돈다. Socket Mode 연결이 겹쳐 이벤트가 어느 쪽으로 갈지 정해지지 않으므로, 기존 경로를 찾지 못했다고 새로 클론하지 않는다.
+
+`~/orca/workspaces/sigongbot-special-edition/` 아래의 디렉터리들은 작업용 Git 워크트리이며 운영 대상이 아니다.
+
+저장소가 아직 없는 새 기기에 처음 설치할 때만 클론한다. 기존 디렉터리가 있으면 덮어쓰거나 삭제하지 말고 Git 상태를 먼저 확인한다.
+
+```bash
+git clone https://github.com/tak0407/sigongbot-special-edition.git ~/sigongbot-special-edition
+cd ~/sigongbot-special-edition
 ```
 
 ## 3. 환경변수 준비
@@ -46,7 +55,7 @@ git log -1 --oneline
 Google Drive의 비공개 폴더 `sigongbot-special-edition 미니PC 이전`에서 `.env`를 미니 PC로 내려받는다. 브라우저의 기본 다운로드 폴더에 저장됐다면 저장소 루트로 복사하고, 원본 다운로드 파일은 정상 복사를 확인한 뒤 안전하게 삭제한다.
 
 ```bash
-cp ~/Downloads/.env ~/apps/sigongbot-special-edition/.env
+cp ~/Downloads/.env ~/sigongbot-special-edition/.env
 chmod 600 .env
 ```
 
