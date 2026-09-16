@@ -103,9 +103,9 @@ async def handle(request: web.Request) -> web.Response:
 <div class="{'card alert' if data['stale'] else 'card'}">정체<div class="number">{data['stale']}건</div><small>{STALE_HOURS}시간 이상 갱신 없음</small></div>
 </section>
 {warning}
-<table><thead><tr><th>사용자</th><th>회차</th><th>채널</th><th>진행</th>
+<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>사용자</th><th>회차</th><th>채널</th><th>진행</th>
 <th>마지막 답변</th><th>마지막 갱신 (KST)</th></tr></thead>
-<tbody>{_item_rows(data, directory)}</tbody></table>
+<tbody>{_item_rows(data, directory)}</tbody></table></div>
 <small>완료된 플로우는 저장 시 삭제되므로 이 목록에 남지 않습니다.</small>
 """
     return web.Response(

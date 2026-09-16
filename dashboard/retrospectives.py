@@ -82,7 +82,7 @@ def _filter_form(data: dict) -> str:
         options.append(f'<option value="{escape(name)}"{selected}>{escape(name)}</option>')
     return (
         '<form class="filters" method="get">'
-        f'<select name="session">{"".join(options)}</select>'
+        f'<select name="session" aria-label="회차 필터">{"".join(options)}</select>'
         "<button type=\"submit\">필터</button>"
         f'<small>{data["total"]}건</small>'
         "</form>"
@@ -134,9 +134,9 @@ async def handle_list(request: web.Request) -> web.Response:
     )
     body = (
         f"{_filter_form(data)}"
-        "<table><thead><tr><th>제출 시각 (KST)</th><th>작성자</th><th>회차</th>"
+        '<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>제출 시각 (KST)</th><th>작성자</th><th>회차</th>'
         "<th>채널</th><th>감정</th><th>잘했던 점</th><th></th></tr></thead>"
-        f"<tbody>{_list_rows(data, directory)}</tbody></table>"
+        f"<tbody>{_list_rows(data, directory)}</tbody></table></div>"
         f"{_pager(data)}"
     )
     return web.Response(
@@ -178,7 +178,7 @@ async def handle_detail(request: web.Request) -> web.Response:
         )
     body = f"""
 <p><a href="/retrospectives">← 목록으로</a></p>
-<table><tbody>
+<table class="detail-table"><tbody>
 <tr><th>ID</th><td>{row['id']}</td></tr>
 <tr><th>작성자</th><td>{slack_directory.user_cell(directory, row['user_id'])}</td></tr>
 <tr><th>회차</th><td>{escape(row['session_name'])}</td></tr>

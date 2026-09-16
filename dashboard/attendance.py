@@ -88,8 +88,8 @@ async def handle(request: web.Request) -> web.Response:
 <div class="card">출석 인원<div class="number">{len(data['records'])}명</div></div>
 </section>
 {_session_filters(data['sessions'], data['selected'])}
-<table><thead><tr><th>팀 채널</th><th>참여자</th><th>출석 시각 (KST)</th></tr></thead>
-<tbody>{rows(table_rows, 3, '아직 기록된 출석이 없습니다.')}</tbody></table>
+<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>팀 채널</th><th>참여자</th><th>출석 시각 (KST)</th></tr></thead>
+<tbody>{rows(table_rows, 3, '아직 기록된 출석이 없습니다.')}</tbody></table></div>
 """
     return web.Response(
         text=layout.render(

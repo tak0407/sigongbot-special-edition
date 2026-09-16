@@ -121,7 +121,7 @@ async def handle(request: web.Request) -> web.Response:
 <form method="post" action="/schedule/announcement/time" class="filters">
 <input type="hidden" name="csrf_token" value="{token}">
 <input type="hidden" name="name" value="{escape(name)}">
-<input type="datetime-local" name="announce_at" value="{announce_value}" required>
+<input aria-label="공지 시각 (KST)" type="datetime-local" name="announce_at" value="{announce_value}" required>
 <button type="submit">시각 변경</button>
 <button type="submit" name="off" value="1">공지 끄기</button></form>
 
@@ -130,7 +130,7 @@ async def handle(request: web.Request) -> web.Response:
 <form method="post" action="/schedule/announcement">
 <input type="hidden" name="csrf_token" value="{token}">
 <input type="hidden" name="name" value="{escape(name)}">
-<textarea name="body" rows="12" maxlength="{MAX_ANNOUNCEMENT_LENGTH}" required>{escape(data["body"])}</textarea>
+<textarea aria-label="공지 문구" name="body" rows="12" maxlength="{MAX_ANNOUNCEMENT_LENGTH}" required>{escape(data["body"])}</textarea>
 <div class="filters"><button type="submit">이 회차만 저장</button>
 <button type="submit" name="reset" value="1">기본 문구로 되돌리기</button></div></form>
 """

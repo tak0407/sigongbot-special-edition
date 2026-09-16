@@ -86,7 +86,7 @@ def _due_form(request, row: dict) -> str:
         '<form method="post" class="inline" action="/schedule/due">'
         f'<input type="hidden" name="csrf_token" value="{csrf_token(request)}">'
         f'<input type="hidden" name="name" value="{escape(row["name"])}">'
-        f'<input type="datetime-local" name="due_at" value="{value}" required>'
+        f'<input aria-label="마감 시각 (KST)" type="datetime-local" name="due_at" value="{value}" required>'
         "<button type=\"submit\">변경</button></form>"
     )
 
@@ -155,23 +155,23 @@ async def handle(request: web.Request) -> web.Response:
 </section>
 {warning}
 <div class="filters"><small>{escape(data['current_cohort'])} 일정</small>{toggle}</div>
-<table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>마감 변경</th></tr></thead>
-<tbody>{_schedule_rows(request, data)}</tbody></table>
+<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>마감 변경</th></tr></thead>
+<tbody>{_schedule_rows(request, data)}</tbody></table></div>
 <small>마감이 지난 회차는 바꿀 수 없습니다. 그 구간에 제출된 회고가 다른 회차에 속한 것처럼 집계되기 때문입니다.
 회차 이름은 회고에 그대로 기록되는 값이라 만든 뒤에는 바꿀 수 없습니다.</small>
 <h2>회차 추가</h2>
 <small>마지막 회차({escape(data['last_name'])}, {data['last_due'].strftime('%Y-%m-%d %H:%M')}) 뒤에만 붙일 수 있습니다.</small>
 <form method="post" action="/schedule/add" class="filters">
 <input type="hidden" name="csrf_token" value="{csrf_token(request)}">
-<input type="text" name="name" placeholder="7기 1회차" required>
-<input type="datetime-local" name="due_at" required>
+<input aria-label="새 회차 이름" type="text" name="name" placeholder="7기 1회차" required>
+<input aria-label="마감 시각 (KST)" type="datetime-local" name="due_at" required>
 <button type="submit">추가</button></form>
 <h2>제출 공지 기본 문구</h2>
 <small>공지 시각이 되면 이 문구가 회차마다 나갑니다. {PLACEHOLDER_HELP}
 특정 회차만 다르게 쓰려면 위 표의 `문구`에서 그 회차만 덮어씁니다.</small>
 <form method="post" action="/schedule/announcement/template">
 <input type="hidden" name="csrf_token" value="{csrf_token(request)}">
-<textarea name="body" rows="8" maxlength="{MAX_ANNOUNCEMENT_LENGTH}" required>{escape(data['template'])}</textarea>
+<textarea aria-label="공지 문구" name="body" rows="8" maxlength="{MAX_ANNOUNCEMENT_LENGTH}" required>{escape(data['template'])}</textarea>
 <div class="filters"><button type="submit">기본 문구 저장</button></div></form>
 {notice}
 """

@@ -88,7 +88,7 @@ def _filter_form(data: dict) -> str:
         )
     return (
         '<form class="filters" method="get">'
-        f'<select name="status">{"".join(options)}</select>'
+        f'<select name="status" aria-label="상태 필터">{"".join(options)}</select>'
         '<button type="submit">필터</button>'
         f'<small>{data["total"]}건</small>'
         "</form>"
@@ -146,9 +146,9 @@ async def handle_list(request: web.Request) -> web.Response:
         notice = '<div class="warn">작업을 다시 대기열에 올렸습니다.</div>'
     body = (
         f"{notice}{_filter_form(data)}"
-        "<table><thead><tr><th>ID</th><th>사용자</th><th>상태</th><th>시도</th>"
+        '<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>ID</th><th>사용자</th><th>상태</th><th>시도</th>'
         "<th>마지막 갱신 (KST)</th><th>오류 / 피드백</th><th></th></tr></thead>"
-        f"<tbody>{_list_rows(data, directory)}</tbody></table>"
+        f"<tbody>{_list_rows(data, directory)}</tbody></table></div>"
         f"{_pager(data)}"
     )
     return web.Response(
@@ -196,7 +196,7 @@ async def handle_detail(request: web.Request) -> web.Response:
             )
     body = f"""
 <p><a href="/ai-jobs">← 목록으로</a></p>
-<table><tbody>
+<table class="detail-table"><tbody>
 <tr><th>ID</th><td>{row['id']}</td></tr>
 <tr><th>사용자</th><td>{slack_directory.user_cell(directory, row['user_id'])}</td></tr>
 <tr><th>상태</th><td>{_status_pill(row['status'])}</td></tr>

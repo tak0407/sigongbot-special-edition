@@ -88,7 +88,7 @@ def _filter_form(data: dict) -> str:
         )
     return (
         '<form class="filters" method="get">'
-        f'<select name="status">{"".join(options)}</select>'
+        f'<select name="status" aria-label="상태 필터">{"".join(options)}</select>'
         '<button type="submit">필터</button>'
         f'<small>{data["total"]}건</small></form>'
     )
@@ -145,9 +145,9 @@ async def handle_list(request: web.Request) -> web.Response:
     )
     body = (
         f"{notice}{_filter_form(data)}"
-        "<table><thead><tr><th>ID</th><th>분류</th><th>제안</th><th>작성자</th>"
+        '<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>ID</th><th>분류</th><th>제안</th><th>작성자</th>'
         "<th>제출 채널</th><th>상태</th><th>생성 시각 (KST)</th><th></th></tr></thead>"
-        f"<tbody>{_list_rows(data, directory)}</tbody></table>{_pager(data)}"
+        f"<tbody>{_list_rows(data, directory)}</tbody></table></div>{_pager(data)}"
     )
     return web.Response(
         text=layout.render(
@@ -181,7 +181,7 @@ async def handle_detail(request: web.Request) -> web.Response:
     )
     body = f"""
 <p><a href="/suggestions">← 목록으로</a></p>
-<table><tbody>
+<table class="detail-table"><tbody>
 <tr><th>ID</th><td>{item['id']}</td></tr>
 <tr><th>분류</th><td>{escape(CATEGORY_LABELS.get(item['category'], item['category']))}</td></tr>
 <tr><th>작성자</th><td>{slack_directory.user_cell(directory, item['user_id'])}</td></tr>

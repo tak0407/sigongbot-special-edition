@@ -180,3 +180,22 @@ python -m compileall -q config.py slack ai_review database main.py tests
 ```
 
 실제 멤버 ID 배정, Slack 게시 권한, Socket Mode 연결, 컨테이너 healthy 여부와 `agy` 실행은 미니 PC에서 별도로 확인해야 합니다.
+
+### 관리자 모바일 회귀 검증
+
+기본 테스트에는 관리자 페이지의 표 스크롤 영역·내비게이션·CSRF 마크업 검증이 포함됩니다.
+실제 렌더링 검증은 개발용 Python 3.11 환경에 Playwright를 설치한 뒤 실행합니다.
+운영 의존성에는 Playwright를 추가하지 않습니다.
+
+```bash
+pip install playwright
+python -m playwright install chromium
+ENV=prod DASHBOARD_BROWSER_TESTS=1 python -m unittest discover -s tests -v
+```
+
+이 테스트는 가짜 Slack 클라이언트와 임시 SQLite만 사용합니다.
+로그인·전체 목록·상세·공지 편집 화면을 320/360/375/390/430/1280px에서 검사하며,
+가로 넘침, 44px 입력·버튼, 표 키보드 스크롤, 메뉴와 필터, CSRF를 포함한 상태 변경을 확인합니다.
+화면 크기 전환과 JavaScript가 꺼진 환경의 메뉴도 확인합니다.
+선택적으로 `DASHBOARD_SCREENSHOTS=/tmp/dashboard-mobile`을 지정하면 320px 스크린샷을 남깁니다.
+실제 휴대전화의 Safari·가상 키보드 및 운영 Slack 연결은 이 검사에 포함되지 않습니다.

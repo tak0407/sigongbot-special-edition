@@ -73,14 +73,59 @@ form.inline button{padding:5px 9px;font-size:13px}
 .body-field .label{font-size:12px;color:#667085;margin-bottom:4px}
 .body-field .text{white-space:pre-wrap;background:#f7f8fa;border-radius:8px;padding:12px}
 .warn{background:#fff5e6;border:1px solid #f5c77e;border-radius:10px;padding:14px;margin:18px 0}
-@media(max-width:760px){.shell{display:block}.side{min-height:0;border-right:0;border-bottom:1px solid #e4e7ec}main{padding:20px 16px 40px}}
+
+/* Keep wide lists scrollable without moving the entire page. */
+.table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.table-scroll table{min-width:600px}
+.table-scroll th,.table-scroll td{overflow-wrap:anywhere}
+.table-scroll td{max-width:360px}
+.table-hint{display:none}
+.detail-table{table-layout:fixed}
+.detail-table th{width:100px}
+body{overflow-wrap:anywhere}
+input,select,textarea{min-width:0;max-width:100%}
+input:not([type=hidden]){font:inherit;padding:6px 10px;border:1px solid #d0d5dd;border-radius:8px}
+form.inline,.pager{flex-wrap:wrap}
+:focus-visible{outline:3px solid #2b5ce6;outline-offset:3px}
+.menu summary{display:none}
+@media(max-width:760px){
+ .shell{display:block}
+ .side{min-height:0;border-right:0;border-bottom:1px solid #e4e7ec;padding:12px 16px}
+ .brand{padding:0 0 8px}
+ .menu summary{display:flex;align-items:center;min-height:44px;cursor:pointer;color:#1b3fa8;font-weight:600}
+ .menu summary::before{content:"☰";margin-right:10px}
+ .menu:not([open])>.menu-content{display:none}
+ .menu-links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+ .side a{padding:12px 8px;min-height:44px}
+ .side .hint{display:none}
+ .account{padding:12px 0 0;display:flex;align-items:center;justify-content:space-between;gap:12px}
+ .account form{margin:0}
+ main{padding:20px 16px 40px}
+ header{gap:8px}
+ .cards{grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+ .card{padding:14px;min-width:0}
+ .number{font-size:24px}
+ .table-hint{display:block;margin:8px 0;font-size:12px;color:#667085}
+ th,td{padding:10px 8px}
+ .table-scroll th,.table-scroll td{min-width:90px}
+ .table-scroll form.inline{min-width:250px}
+ button,select,input:not([type=hidden]),textarea,form.inline input,form.inline button,.account button{font-size:16px;min-height:44px}
+ .filters{align-items:stretch}
+ .filters>input:not([type=hidden]),.filters>select{flex:1 1 100%;width:100%}
+ .filters>button{flex:1 1 auto}
+ form.inline{gap:8px}
+ form.inline input{width:100%}
+ main a{display:inline-block;min-height:44px;padding-top:10px;padding-bottom:10px}
+ .pager{gap:8px}
+ .body-field .text{overflow-wrap:anywhere}
+}
 """
 
 
 def _nav(active: str) -> str:
     links = []
     for path, label, hint in NAV:
-        cls = ' class="on"' if path == active else ""
+        cls = ' class="on" aria-current="page"' if path == active else ""
         links.append(
             f'<a href="{path}"{cls}>{escape(label)}'
             f'<span class="hint">{escape(hint)}</span></a>'
@@ -115,7 +160,18 @@ def render(
 <title>{escape(title)}</title>
 <style>{STYLE}</style>
 <body><div class="shell">
-<nav class="side"><div class="brand">시공삶 관리자</div>{_nav(active)}{account}</nav>
+<nav class="side" aria-label="관리자 메뉴"><div class="brand">시공삶 관리자</div>
+<details class="menu" open><summary>메뉴 · {escape(next((label for path, label, _ in NAV if path == active), "관리자"))}</summary>
+<div class="menu-content"><div class="menu-links">{_nav(active)}</div>{account}</div></details></nav>
+<script>
+(() => {{
+ const menu = document.querySelector('.menu');
+ const mobile = window.matchMedia('(max-width:760px)');
+ const syncMenu = () => {{ menu.open = !mobile.matches; }};
+ syncMenu();
+ mobile.addEventListener('change', syncMenu);
+}})();
+</script>
 <main><header><h1>{escape(heading)}</h1><small>{subtitle}</small></header>
 {body}
 </main></div></body></html>"""

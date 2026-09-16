@@ -205,9 +205,9 @@ async def handle(request: web.Request) -> web.Response:
 </section>
 <h2>멤버별 참여 이력</h2>
 <small>연속 미제출이 긴 순서입니다. 점은 최근 {RECENT_MARKS}개 회차이고, 왼쪽이 오래된 회차입니다. 점에 마우스를 올리면 회차 이름이 보입니다.</small>
-<table><thead><tr>
+<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr>
 <th>멤버</th><th>팀</th><th>이번 회차</th><th>제출</th><th>연속 미제출</th><th>최근 회차</th><th>마지막 제출</th>
-</tr></thead><tbody>{_member_rows(data, directory)}</tbody></table>
+</tr></thead><tbody>{_member_rows(data, directory)}</tbody></table></div>
 """
     return web.Response(
         text=layout.render(

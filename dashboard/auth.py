@@ -283,8 +283,12 @@ def _login_page(*, csrf: str, next_path: str, error: str = "") -> str:
     notice = f'<p class="error">{escape(error)}</p>' if error else ""
     return f"""<!doctype html><html lang="ko"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>관리자 로그인</title><style>
-body{{font-family:system-ui,sans-serif;background:#f5f7fa;margin:0;color:#202124}}
-main{{max-width:380px;margin:10vh auto;background:white;padding:30px;border-radius:14px;box-shadow:0 8px 30px #0001}}
+*{{box-sizing:border-box}}
+body{{padding:0 16px;overflow-wrap:anywhere;font-family:system-ui,sans-serif;background:#f5f7fa;margin:0;color:#202124}}
+main{{width:100%;max-width:440px;margin:10vh auto;background:white;padding:30px;border-radius:14px;box-shadow:0 8px 30px #0001}}
+input,button{{font:inherit;font-size:16px;min-height:44px}}
+:focus-visible{{outline:3px solid #2b5ce6;outline-offset:3px}}
+@media(max-width:480px){{main{{padding:24px 20px;margin:5vh auto}}h1{{font-size:24px}}}}
 label{{display:block;margin:16px 0 6px}}input{{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccd1d9;border-radius:8px}}
 button{{width:100%;margin-top:22px;padding:10px;border:0;border-radius:8px;background:#2b5ce6;color:white;font-weight:600}}
 .error{{color:#b42318}}small{{color:#667085}}</style><body><main><h1>시공삶 관리자</h1>
