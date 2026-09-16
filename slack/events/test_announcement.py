@@ -15,6 +15,7 @@ from database.guided_reflection import (
     save_guided_answer,
 )
 from reflection_questions import select_reflection_questions
+from utils import get_latest_temp_retrospective
 from slack.events.command_retrospective import build_retrospective_view
 
 
@@ -236,24 +237,19 @@ async def handle_start_from_announcement(
     ack: AsyncAck, body: dict, client: AsyncWebClient
 ) -> None:
     await ack()
-    metadata = json.loads(body["actions"][0]["value"])
-    channel_options = None
-    if body["user"]["id"] in settings.SUBMISSION_CHANNEL_CHOOSER_IDS:
-        channel_options = []
-        for channel_id in _team_channels():
-            response = await client.conversations_info(channel=channel_id)
-            channel_options.append(
-                {
-                    "text": {
-                        "type": "plain_text",
-                        "text": f"#{response['channel']['name']}",
-                    },
-                    "value": channel_id,
-                }
-            )
-    await client.views_open(
+    from slack.events.submission_entry import open_submission_entry
+
+    try:
+        metadata = json.loads(body["actions"][0]["value"])
+        session_name = (metadata.get("session_name") or "") if isinstance(metadata, dict) else ""
+    except (ValueError, TypeError):
+        session_name = ""
+    await open_submission_entry(
+        client=client,
         trigger_id=body["trigger_id"],
-        view=build_method_selection_view(metadata, channel_options),
+        user_id=body["user"]["id"],
+        channel_id=body["channel"]["id"],
+        session_name=session_name,
     )
 
 
@@ -294,6 +290,7 @@ async def handle_method_select(
             channel_id=metadata["channel_id"],
             session_name=metadata["session_name"],
             test_mode=metadata.get("test_mode", True),
+            initial_values=get_latest_temp_retrospective(body["user"]["id"]),
         )
     if legacy_action:
         await client.views_update(view_id=body["view"]["id"], view=next_view)
