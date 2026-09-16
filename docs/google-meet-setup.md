@@ -157,19 +157,49 @@ Meet 입장 정책은 공식 문서 기준으로 세 가지다.
 | `RESTRICTED` | Calendar 일정으로 초대됐거나 회의 안에서 호스트가 부른 사람만 |
 
 노크는 **주최자만 승인할 수 있다.** 운영자가 들어오지 않는 회고라면 팀원이
-노크 단계에 걸리면 안 되므로, 둘 중 하나를 반드시 설정한다.
+노크 단계에 걸리면 안 된다.
 
-1. **`GOOGLE_MEET_ACCESS_TYPE=OPEN`** (권장)
-   확정할 때 Meet REST API `spaces.patch`로 입장 정책을 `OPEN`으로 바꾼다.
-   `meetings.space.settings` 스코프가 필요하다. 이 호출이 실패해도 이벤트와 Meet
-   링크는 그대로 쓸 수 있고, 관리자 웹과 로그에 경고가 남는다.
-2. **`ONLINE_RETRO_TEAM_ATTENDEES`로 팀원을 Calendar 참석자로 초대**
-   팀 채널 ID별 이메일 목록을 JSON으로 준다. `RESTRICTED`에서도 초대된 사람은
-   노크 없이 들어온다. 실제 이메일은 운영 `.env`에만 둔다.
+### 개인 Google 계정에서 확인한 사실 (2026-09-16)
+
+Calendar API로 만든 Meet의 기본 설정은 **`accessType: TRUSTED`, `moderation: ON`**
+이었다. 그리고 이 설정을 API로 바꾸는 것은 **거부됐다.**
+
+| 호출 | 결과 |
+| --- | --- |
+| `spaces.get` (meetingCode로 조회) | `200` — 설정을 읽을 수 있다 |
+| `spaces.patch` (`config.accessType`) | `403 PERMISSION_DENIED: Permission denied on resource Space` |
+
+`meetings.space.settings` 스코프를 동의받았는데도 쓰기만 막힌다. 이 스코프를
+Calendar가 만든 공간에 쓸 수 있다고 공지된 범위는 auto-artifacts였고,
+`accessType`까지 보장한 적은 없다. Workspace 계정에서는 다를 수 있으나
+개인 계정에서는 기대하지 않는 편이 안전하다.
+
+### 그래서 어떻게 입장시키나
+
+`TRUSTED`의 공식 정의가 그대로 해법이다. "Anyone outside the organization, but
+invited through a Google Calendar event, can join without knocking." 개인 계정은
+조직이 없으므로, **Calendar 참석자로 초대된 사람만 노크 없이 들어온다.**
+
+1. **`ONLINE_RETRO_TEAM_ATTENDEES`로 팀원을 Calendar 참석자로 초대** (권장)
+   팀 채널 ID별 이메일 목록을 JSON으로 준다. 한 번 설정하면 이후 확정마다
+   자동으로 초대된다. 실제 이메일은 운영 `.env`에만 둔다.
 
    ```bash
    ONLINE_RETRO_TEAM_ATTENDEES='{"C_REPLACE_ME":["member@example.com"]}'
    ```
+
+2. **확정 후 캘린더에서 직접 `열림`으로 바꾸기**
+   이메일을 모으기 어려우면, 확정된 일정을 Google 캘린더에서 열어 Meet 액세스를
+   `열림`으로 바꾼다. 링크만 있으면 누구나 들어온다. 팀당 회차마다 한 번 해야 한다.
+
+참석자 초대는 입장만 허용한다. 호스트 권한이 넘어가지는 않으므로 초대된 사람이
+다른 사람의 노크를 승인할 수는 없다. 회고 진행은 Slack 버튼이 끌고 가므로 호스트
+권한은 필요하지 않다.
+
+`GOOGLE_MEET_ACCESS_TYPE`은 `spaces.patch`가 허용되는 계정에서만 의미가 있다.
+값을 넣으면 확정할 때 그 값으로 바꾸려 시도하고, 실패해도 이벤트와 Meet 링크는
+그대로 쓸 수 있으며 관리자 웹과 로그에 경고만 남는다. 개인 계정이라면 비워 두어
+실패가 확정된 호출을 매번 하지 않게 한다.
 
 또 하나 확인할 것: Meet 설정의 **"Host must join before anyone else can join"**
 (호스트 우선 입장) 체크는 꺼 두어야 한다. 이 옵션이 켜져 있으면 accessType과
@@ -177,8 +207,6 @@ Meet 입장 정책은 공식 문서 기준으로 세 가지다.
 도메인 기본값을 정할 수 있으므로, 조직 계정이라면 관리 콘솔의 Meet 접근 설정도
 함께 확인한다.
 
-`GOOGLE_MEET_ACCESS_TYPE`을 비워 두면 입장 정책을 건드리지 않고 계정 기본값을
-그대로 쓴다. 이 경우 관리자 웹에 안내 문구가 뜬다.
 
 ## 6. 중복 생성·재시도·시간 변경
 

@@ -103,7 +103,7 @@ ONLINE_RETRO_MEETINGS='[{"session_name":"6기 1회차","starts_at":"2026-09-14T2
 
 같은 팀·같은 날짜에는 항상 같은 Calendar 이벤트 ID를 사용합니다. 재시도하거나 버튼을 다시 눌러도 이벤트와 Meet 링크는 하나만 유지되고, 시간을 바꾸면 기존 이벤트를 갱신합니다. Google 호출 전에 확정 요청을 DB에 먼저 남기므로 실패해도 어떤 팀이 진행 중이었는지 추적할 수 있고, 실패 사유는 관리자 웹에 그대로 표시됩니다. 실패한 확정은 Slack에 공지되지 않습니다.
 
-운영자가 Meet에 들어가지 않아도 팀원이 입장하려면 `GOOGLE_MEET_ACCESS_TYPE=OPEN`으로 두거나, `ONLINE_RETRO_TEAM_ATTENDEES`로 팀원을 Calendar 참석자로 초대해야 합니다. Google 공식 문서 기준으로 노크(ask to join)는 주최자만 승인할 수 있기 때문입니다. OAuth 클라이언트 발급, 필요한 scope, refresh token 준비 절차는 [docs/google-meet-setup.md](docs/google-meet-setup.md)를 따릅니다. 인증정보는 운영 `.env`나 Git 비추적 인증 파일에만 두며 Git에 넣지 않습니다.
+운영자가 Meet에 들어가지 않아도 팀원이 입장하려면 `ONLINE_RETRO_TEAM_ATTENDEES`로 팀원을 Calendar 참석자로 초대해야 합니다. 노크(ask to join)는 주최자만 승인할 수 있고, Calendar가 만든 Meet의 기본 입장 정책(`TRUSTED`)에서는 일정에 초대된 사람만 노크 없이 들어오기 때문입니다. 개인 Google 계정에서는 이 정책을 API로 바꾸는 `spaces.patch`가 403으로 거부되므로 `GOOGLE_MEET_ACCESS_TYPE`은 비워 둡니다. OAuth 클라이언트 발급, 필요한 scope, refresh token 준비 절차는 [docs/google-meet-setup.md](docs/google-meet-setup.md)를 따릅니다. 인증정보는 운영 `.env`나 Git 비추적 인증 파일에만 두며 Git에 넣지 않습니다.
 
 매회차 제출 공지는 `ANNOUNCEMENT_CHANNEL`에 회차마다 한 번 게시합니다. 공지 시각의 기본값은 마감 3일 10시간 전(화요일 05:00 마감 기준 금요일 19:00)이며, 회차별 공지 시각과 문구는 관리자 웹의 `회차 일정` 탭에서 고칩니다. 기본 문구가 모든 회차에 쓰이고, 특정 회차만 다르게 보내려면 그 회차 문구만 덮어씁니다. `{회차}`와 `{마감}`은 발송 시점에 치환됩니다. 이미 나갔거나 마감이 지난 회차의 공지는 고칠 수 없고, 봇이 멈춘 동안 마감까지 지난 회차의 공지는 뒤늦게 나가지 않습니다.
 
