@@ -442,27 +442,28 @@ class AdminAuthenticationTest(AdminWebTestCase):
         )
         self.assertEqual(locked.status, 429)
 
-    async def test_expired_login_screen_is_reissued_instead_of_a_dead_end(self):
-        """논스 쿠키가 만료돼 CSRF가 깨져도 새 토큰을 받은 화면으로 곧바로 다시 로그인한다."""
+    async def test_expired_login_screen_accepts_same_origin_form_once(self):
+        """논스 쿠키가 만료돼도 같은 관리자 화면의 첫 로그인은 성공한다."""
+        csrf, _, _ = await self._login_form()
+        response = await self.client.post(
+            "/login",
+            data={"username": "admin", "password": "test-password-long", "csrf_token": csrf},
+            headers={"Origin": str(self.client.make_url("/")).rstrip("/")},
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status, 302)
+        self.assertIn(auth.SESSION_COOKIE, response.cookies)
+
+    async def test_expired_login_screen_rejects_cross_origin_form(self):
         csrf, _, _ = await self._login_form()
         rejected = await self.client.post(
             "/login",
             data={"username": "admin", "password": "test-password-long", "csrf_token": csrf},
-        )
-        self.assertEqual(rejected.status, 403)
-        body = await rejected.text()
-        self.assertIn("다시 입력해 주세요", body)
-        self.assertEqual(rejected.headers["Cache-Control"], "no-store")
-
-        retry_csrf = re.search(r'name="csrf_token" value="([^"]+)"', body).group(1)
-        retry_nonce = rejected.cookies[auth.LOGIN_CSRF_COOKIE].value
-        retried = await self.client.post(
-            "/login",
-            data={"username": "admin", "password": "test-password-long", "csrf_token": retry_csrf},
-            headers={"Cookie": f"{auth.LOGIN_CSRF_COOKIE}={retry_nonce}"},
+            headers={"Origin": "https://example.invalid"},
             allow_redirects=False,
         )
-        self.assertEqual(retried.status, 302)
+        self.assertEqual(rejected.status, 403)
+        self.assertIn("다시 입력해 주세요", await rejected.text())
 
     async def test_failed_login_hands_back_a_fresh_csrf_nonce(self):
         """비밀번호를 틀린 화면에서도 논스를 새로 받아 만료 시계가 다시 돌아간다."""

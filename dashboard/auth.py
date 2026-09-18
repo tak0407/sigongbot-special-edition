@@ -10,7 +10,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import escape
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from aiohttp import web
 from loguru import logger
@@ -273,6 +273,24 @@ def safe_internal_path(value: str) -> str:
     return value
 
 
+def _is_same_origin_login(request: web.Request) -> bool:
+    """브라우저가 같은 관리자 호스트에서 보낸 로그인 POST인지 확인한다.
+
+    로그인 화면을 오래 열어 둬 논스 쿠키가 먼저 만료될 수 있다. 이때 브라우저가
+    자동으로 보내는 Origin이 현재 Host와 정확히 같으면 로그인 CSRF 방어를 유지한
+    채 제출을 받을 수 있다. Origin이 없거나 다른 호스트면 기존 논스 검증이 반드시
+    필요하다.
+    """
+    origin = request.headers.get("Origin", "")
+    if not origin:
+        return False
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and parsed.netloc.casefold() == request.host.casefold()
+
+
 def _set_secure_cookie(response: web.StreamResponse, name: str, value: str, *, max_age: int) -> None:
     response.set_cookie(
         name, value, max_age=max_age, httponly=True, secure=True, samesite="Strict", path=COOKIE_PATH
@@ -333,7 +351,10 @@ async def handle_login(request: web.Request) -> web.Response:
         expected_csrf = _csrf_token("login:" + nonce) if nonce else ""
     except RuntimeError as error:
         raise web.HTTPServiceUnavailable(text=str(error))
-    if not expected_csrf or not hmac.compare_digest(supplied_csrf, expected_csrf):
+    nonce_valid = bool(
+        expected_csrf and hmac.compare_digest(supplied_csrf, expected_csrf)
+    )
+    if not nonce_valid and not _is_same_origin_login(request):
         logger.warning(
             "관리자 로그인 CSRF 검증 실패: 논스 쿠키 {}. 새 로그인 화면을 내려보냅니다.",
             "없음" if not nonce else "불일치",
@@ -343,6 +364,10 @@ async def handle_login(request: web.Request) -> web.Response:
             next_path=next_path,
             error="로그인 화면이 만료되었습니다. 다시 입력해 주세요.",
             status=403,
+        )
+    if not nonce_valid:
+        logger.info(
+            "관리자 로그인 논스가 만료됐지만 같은 Origin 요청을 확인해 로그인을 계속합니다."
         )
 
     username = str(form.get("username", "")).strip()
