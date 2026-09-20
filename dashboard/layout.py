@@ -23,7 +23,7 @@ STYLE = """
 *{box-sizing:border-box}
 body{font-family:system-ui,sans-serif;margin:0;color:#202124;background:#fff}
 .shell{display:flex;align-items:flex-start;min-height:100vh}
-.side{flex:0 0 210px;background:#f7f8fa;border-right:1px solid #e4e7ec;padding:20px 0;min-height:100vh}
+.side{flex:0 0 210px;background:#f7f8fa;border-right:1px solid #e4e7ec;padding:20px 0;position:sticky;top:0;align-self:flex-start;height:100vh;overflow-y:auto;overscroll-behavior:contain}
 .brand{font-weight:700;font-size:15px;padding:0 18px 14px}
 .side a{display:block;padding:9px 18px;color:#344054;text-decoration:none;font-size:14px;border-left:3px solid transparent}
 .side a:hover{background:#eef0f4}
@@ -91,7 +91,7 @@ form.inline,.pager{flex-wrap:wrap}
 .menu summary{display:none}
 @media(max-width:760px){
  .shell{display:block}
- .side{min-height:0;border-right:0;border-bottom:1px solid #e4e7ec;padding:12px 16px}
+ .side{position:static;height:auto;overflow:visible;border-right:0;border-bottom:1px solid #e4e7ec;padding:12px 16px}
  .brand{padding:0 0 8px}
  .menu summary{display:flex;align-items:center;min-height:44px;cursor:pointer;color:#1b3fa8;font-weight:600}
  .menu summary::before{content:"☰";margin-right:10px}
