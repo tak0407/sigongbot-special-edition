@@ -51,6 +51,42 @@ class EphemeralDismissTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[1]["elements"][1]["text"]["text"], "닫기")
         self.assertEqual(len(blocks[1]["elements"]), 1)
 
+    async def test_text_only_notice_keeps_its_body(self):
+        client = AsyncMock()
+
+        await ephemeral.post_ephemeral(
+            client, channel="C1", user="U1", text="이미 회고를 공유했어요!"
+        )
+
+        blocks = client.chat_postEphemeral.await_args.kwargs["blocks"]
+        self.assertEqual(blocks[0]["type"], "section")
+        self.assertEqual(blocks[0]["text"]["text"], "이미 회고를 공유했어요!")
+        self.assertEqual(blocks[1]["elements"][0]["action_id"], "dismiss_ephemeral")
+        self.assertEqual(
+            client.chat_postEphemeral.await_args.kwargs["text"],
+            "이미 회고를 공유했어요!",
+        )
+
+    async def test_oversized_text_falls_back_to_plain_message(self):
+        client = AsyncMock()
+        text = "가" * (ephemeral._SECTION_TEXT_LIMIT + 1)
+
+        await ephemeral.post_ephemeral(client, channel="C1", user="U1", text=text)
+
+        self.assertIsNone(client.chat_postEphemeral.await_args.kwargs["blocks"])
+        self.assertEqual(client.chat_postEphemeral.await_args.kwargs["text"], text)
+
+    async def test_caller_blocks_are_not_duplicated_with_a_section(self):
+        client = AsyncMock()
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "안내"}}]
+
+        await ephemeral.post_ephemeral(
+            client, channel="C1", user="U1", text="안내", blocks=blocks
+        )
+
+        sent = client.chat_postEphemeral.await_args.kwargs["blocks"]
+        self.assertEqual([block["type"] for block in sent], ["section", "actions"])
+
     async def test_response_url_requests_original_message_deletion(self):
         response = _FakeResponse(200)
         session = _FakeSession(response)

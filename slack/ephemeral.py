@@ -9,6 +9,8 @@ from slack_bolt.async_app import AsyncAck
 
 DISMISS_EPHEMERAL_ACTION_ID = "dismiss_ephemeral"
 _DELETE_PAYLOAD = {"delete_original": True}
+# Slack section 블록의 텍스트 상한.
+_SECTION_TEXT_LIMIT = 3000
 
 
 def add_dismiss_button(blocks: list[dict] | None) -> list[dict]:
@@ -41,6 +43,24 @@ def add_dismiss_button(blocks: list[dict] | None) -> list[dict]:
     return result
 
 
+def _body_blocks(text: str, blocks: list[dict] | None) -> list[dict] | None:
+    """게시할 blocks를 고른다.
+
+    blocks를 함께 보내면 Slack은 text를 본문이 아니라 알림 미리보기로만 쓴다.
+    호출자가 blocks를 주지 않았는데 닫기 버튼만 붙이면 본문이 빈 메시지가 되므로,
+    text를 section 블록으로 만들어 본문을 유지한다.
+    """
+    if blocks:
+        return add_dismiss_button(blocks)
+    if text and len(text) <= _SECTION_TEXT_LIMIT:
+        return add_dismiss_button(
+            [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+        )
+    # section 한도를 넘는 안내는 blocks 없이 보낸다. 닫기 버튼을 잃더라도 본문이
+    # 잘리거나 사라지는 것보다 낫다.
+    return None
+
+
 async def post_ephemeral(
     client,
     *,
@@ -55,7 +75,7 @@ async def post_ephemeral(
         channel=channel,
         user=user,
         text=text,
-        blocks=add_dismiss_button(blocks),
+        blocks=_body_blocks(text, blocks),
         **kwargs,
     )
 
