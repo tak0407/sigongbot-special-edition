@@ -446,6 +446,37 @@ def _online_retro_confirmed_meetings(connection: sqlite3.Connection) -> None:
     )
 
 
+def _session_passes(connection: sqlite3.Connection) -> None:
+    """회차 회고를 공식적으로 건너뛴 기록.
+
+    기수는 회차 이름의 관례로만 표현되므로 집계를 안정적으로 하려고 사용
+    시점의 기수를 함께 박아 둔다. 회차당 한 번만 쓸 수 있으므로
+    (user_id, session_name)에 UNIQUE를 건다.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_passes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            session_name TEXT NOT NULL,
+            cohort TEXT NOT NULL,
+            team_channel TEXT NOT NULL,
+            slack_ts TEXT,
+            used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, session_name)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS session_passes_cohort_idx"
+        " ON session_passes(user_id, cohort)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS session_passes_session_idx"
+        " ON session_passes(session_name)"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -460,6 +491,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (11, "submission_announcement_messages", _submission_announcement_messages),
     (12, "bot_improvement_suggestions", _bot_improvement_suggestions),
     (13, "online_retro_confirmed_meetings", _online_retro_confirmed_meetings),
+    (14, "session_passes", _session_passes),
 )
 
 

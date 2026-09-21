@@ -31,6 +31,12 @@ from slack.events.view_admin_menu import (
     handle_view_admin_edit_retrospective,
 )
 from slack.events.command_my_retrospectives import handle_command_my_retrospectives
+from slack.events.session_pass import (
+    PASS_ACTION_ID,
+    PASS_CALLBACK_ID,
+    handle_open_pass_modal,
+    handle_pass_confirm,
+)
 from slack.events.command_suggestion import (
     OPEN_SUGGESTION_ACTION_ID,
     handle_command_suggestion,
@@ -214,6 +220,10 @@ app.action("view_retrospective_detail")(handle_action_view_retrospective_detail)
 app.command("/제안")(handle_command_suggestion)
 app.action(OPEN_SUGGESTION_ACTION_ID)(handle_open_suggestion_modal)
 app.view("bot_improvement_suggestion_submit")(handle_view_suggestion_submit)
+
+# session pass
+app.action(PASS_ACTION_ID)(handle_open_pass_modal)
+app.view(PASS_CALLBACK_ID)(handle_pass_confirm)
 
 # admin
 app.command("/관리자")(handle_command_admin)  # 관리자 메뉴 호출

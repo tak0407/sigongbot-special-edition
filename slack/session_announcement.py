@@ -11,6 +11,8 @@ import asyncio
 import datetime
 import json
 
+from slack.events.session_pass import PASS_ACTION_ID
+
 from loguru import logger
 from slack_sdk.web.async_client import AsyncWebClient
 
@@ -54,7 +56,14 @@ def build_announcement_blocks(*, channel_id: str, session_name: str, body: str) 
                     "text": {"type": "plain_text", "text": "회고 제출하기"},
                     "style": "primary",
                     "value": metadata,
-                }
+                },
+                # 제출이 주 목적이므로 primary는 제출 버튼에만 둔다.
+                {
+                    "type": "button",
+                    "action_id": PASS_ACTION_ID,
+                    "text": {"type": "plain_text", "text": "이번 회차 패스"},
+                    "value": metadata,
+                },
             ],
         },
     ]

@@ -20,6 +20,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 from alerts import build_alert, send_alert
 from config import settings
 from database.retrospective import get_submitted_user_ids
+from database.passes import passed_user_ids_async
 from database.scheduled_announcements import announcement_sent, mark_announcement_sent
 from slack.ephemeral import post_ephemeral
 from utils import get_current_session_info, tz_now
@@ -130,8 +131,10 @@ async def send_unsubmitted_reminders(
         return {"targets": 0, "delivered": 0, "fallback": 0, "failed": 0}
 
     submitted = await get_submitted_user_ids(session_name, include_test=False)
+    # 패스를 쓴 사람은 공식적으로 건너뛴 것이므로 독촉하지 않는다.
+    passed = await passed_user_ids_async(session_name)
     # 발송 순서를 재현 가능하게만 정렬한다. 이 목록은 밖으로 내보내지 않는다.
-    targets = sorted(members - submitted)
+    targets = sorted(members - submitted - passed)
 
     text = f"{session_name} 회고 마감이 다가오고 있어요."
     delivered = 0

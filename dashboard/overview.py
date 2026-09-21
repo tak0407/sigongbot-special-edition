@@ -20,16 +20,29 @@ RECENT_LIMIT = 10
 TREND_LIMIT = 8
 
 
-def _team_breakdown(destinations: dict[str, str], submitted: set[str]) -> list[dict]:
-    """멤버 -> 채널 매핑을 채널별 제출/미제출 집계로 뒤집는다."""
+def _team_breakdown(
+    destinations: dict[str, str], submitted: set[str], passed: set[str] | None = None
+) -> list[dict]:
+    """멤버 -> 채널 매핑을 채널별 제출/패스/미제출 집계로 뒤집는다."""
+    passed = passed or set()
     teams: dict[str, dict] = {}
     for user_id, channel in sorted(destinations.items()):
         team = teams.setdefault(
-            channel, {"channel": channel, "members": 0, "submitted": 0, "missing": []}
+            channel,
+            {
+                "channel": channel,
+                "members": 0,
+                "submitted": 0,
+                "passed": [],
+                "missing": [],
+            },
         )
         team["members"] += 1
         if user_id in submitted:
             team["submitted"] += 1
+        elif user_id in passed:
+            # 패스는 공식적으로 건너뛴 것이라 리마인드 대상이 아니다.
+            team["passed"].append(user_id)
         else:
             team["missing"].append(user_id)
     # 미제출이 남은 팀을 위로 올려 리마인드 대상을 먼저 보이게 한다.
@@ -41,6 +54,13 @@ def _collect() -> dict:
     destinations = dict(settings.SUBMISSION_DESTINATIONS)
     expected = set(destinations)
     with get_connection() as connection:
+        passed = {
+            row["user_id"]
+            for row in connection.execute(
+                "SELECT user_id FROM session_passes WHERE session_name = ?",
+                (session_name,),
+            )
+        }
         submitted = {
             row["user_id"]
             for row in connection.execute(
@@ -72,10 +92,12 @@ def _collect() -> dict:
         "submitted": len(submitted),
         "separate": sorted(separate),
         "expected": len(expected),
-        "missing": max(0, len(expected - submitted)),
+        # 패스는 미제출로 세지 않는다. 리마인드 대상이 아니기 때문이다.
+        "missing": max(0, len(expected - submitted - passed)),
         # 별도 제출 계정을 제외한 팀 미배정 제출은 배정 누락 점검용으로 센다.
         "unassigned": len(submitted - expected),
-        "teams": _team_breakdown(destinations, submitted),
+        "teams": _team_breakdown(destinations, submitted, passed),
+        "passed": len(passed),
         "pending_posts": pending_posts,
         "recent": [dict(row) for row in recent],
         "trend": list(reversed(trend)),
@@ -97,15 +119,26 @@ def _team_rows(data: dict, directory: dict) -> str:
             )
         else:
             missing_cell = '<span class="done">전원 제출</span>'
+
+        if team["passed"]:
+            names = ", ".join(
+                slack_directory.user_label(directory, user_id)
+                for user_id in team["passed"]
+            )
+            pass_cell = f'<span class="pill">{len(team["passed"])}명</span> {escape(names)}'
+        else:
+            pass_cell = "-"
+
         items.append(
             "<tr>"
             f"<td>{slack_directory.channel_cell(directory, team['channel'])}</td>"
             f"<td>{team['submitted']} / {team['members']}</td>"
+            f"<td>{pass_cell}</td>"
             f"<td>{len(team['missing'])}</td>"
             f"<td>{missing_cell}</td>"
             "</tr>"
         )
-    return rows(items, 4, "SUBMISSION_TEAMS가 비어 있어 팀별 집계를 만들 수 없습니다.")
+    return rows(items, 5, "SUBMISSION_TEAMS가 비어 있어 팀별 집계를 만들 수 없습니다.")
 
 
 def _trend_rows(data: dict) -> str:
@@ -158,12 +191,12 @@ async def handle(request: web.Request) -> web.Response:
     body = f"""
 <section class="cards">
 <div class="card">현재 회차<div class="number">{escape(data['session_name'])}</div><small>{data['status']} · 마감까지 {data['remaining']}</small></div>
-<div class="card">제출 현황<div class="number">{data['submitted']} / {data['expected']}</div><small>미제출 {data['missing']}명{unassigned}</small></div>
+<div class="card">제출 현황<div class="number">{data['submitted']} / {data['expected']}</div><small>미제출 {data['missing']}명 · 패스 {data['passed']}명{unassigned}</small></div>
 <div class="{pending_posts_card}">게시 기록 미확인<div class="number">{data['pending_posts']}건</div><small>Slack 게시 후 상태 기록이 끝나지 않은 회고</small></div>
 {separate_card}
 </section>
 <h2>팀별 제출 현황</h2><small>미제출자는 Slack에 그대로 붙여 넣으면 멘션으로 바뀝니다.</small>
-<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>채널</th><th>제출</th><th>미제출</th><th>미제출자</th></tr></thead><tbody>{_team_rows(data, directory)}</tbody></table></div>
+<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>채널</th><th>제출</th><th>패스</th><th>미제출</th><th>미제출자</th></tr></thead><tbody>{_team_rows(data, directory)}</tbody></table></div>
 <h2>회차별 제출 추이</h2><small>최근 {TREND_LIMIT}개 회차의 제출자 수입니다. 기수마다 인원이 달라 비율이 아닌 인원으로 표시합니다.</small>
 <p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>제출자</th><th></th></tr></thead><tbody>{_trend_rows(data)}</tbody></table></div>
 <h2>최근 제출</h2><small>제출 시각을 누르면 Slack 메시지로 이동합니다.</small>
