@@ -32,7 +32,9 @@ from slack.events.view_admin_menu import (
 )
 from slack.events.command_my_retrospectives import handle_command_my_retrospectives
 from slack.events.command_suggestion import (
+    OPEN_SUGGESTION_ACTION_ID,
     handle_command_suggestion,
+    handle_open_suggestion_modal,
     handle_view_suggestion_submit,
 )
 from slack.events.action_view_retrospective_detail import (
@@ -210,6 +212,7 @@ app.action("view_retrospective_detail")(handle_action_view_retrospective_detail)
 
 # bot improvement suggestions
 app.command("/제안")(handle_command_suggestion)
+app.action(OPEN_SUGGESTION_ACTION_ID)(handle_open_suggestion_modal)
 app.view("bot_improvement_suggestion_submit")(handle_view_suggestion_submit)
 
 # admin

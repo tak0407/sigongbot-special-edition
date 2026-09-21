@@ -15,6 +15,7 @@ from database.retrospective import (
 from database.guided_reflection import delete_guided_reflection
 from exception import RetrospectiveAlreadySubmitted
 from slack.ephemeral import post_ephemeral
+from slack.events.command_suggestion import OPEN_SUGGESTION_ACTION_ID
 from utils import save_temp_retrospective, cleanup_temp_files
 
 
@@ -37,6 +38,53 @@ def _get_submission_channel(
     ):
         return requested_channel
     return settings.SUBMISSION_DESTINATIONS.get(user_id, "")
+
+
+async def _offer_suggestion(
+    client: AsyncWebClient, *, channel: str, user_id: str
+) -> None:
+    """제출 직후 작성자에게만 개선 제안 입구를 보여 준다.
+
+    안내가 실패해도 회고는 이미 게시됐으므로 예외를 올리지 않는다. 올리면
+    바깥 except가 회고 제출을 실패로 처리해 임시 저장까지 남긴다.
+    """
+    try:
+        await post_ephemeral(
+            client,
+            channel=channel,
+            user=user_id,
+            text="회고가 공유됐어요! 🤗 시공봇에 불편하거나 바라는 점이 있으면 알려주세요.",
+            blocks=[
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            "회고가 공유됐어요! 🤗\n"
+                            "시공봇을 쓰면서 불편했거나 바라는 점이 있으면 알려주세요."
+                        ),
+                    },
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "action_id": OPEN_SUGGESTION_ACTION_ID,
+                            "text": {"type": "plain_text", "text": "개선 제안하기"},
+                            "value": "from_submit",
+                        }
+                    ],
+                },
+            ],
+        )
+    except Exception as error:
+        logger.bind(alert=False).warning(
+            "제출 후 개선 제안 안내 실패 - user_id={}, channel={}, error_type={}",
+            user_id,
+            channel,
+            type(error).__name__,
+        )
 
 
 async def handle_view_retrospective_submit(
@@ -231,6 +279,12 @@ async def handle_view_retrospective_submit(
             logger.error(
                 f"게시 상태 기록 실패 - ID: {record['id']}, User: {user_id}, Error: {str(error)}"
             )
+
+        # 방금 봇을 써 본 직후가 불편했던 점이 가장 생생할 때다. 공개 게시물이
+        # 아니라 작성자에게만 보이는 안내로 제안 입구를 열어 준다.
+        await _offer_suggestion(
+            client, channel=original_channel_id, user_id=user_id
+        )
 
         # 성공적으로 저장되면 임시 파일 삭제
         cleanup_temp_files(user_id)
