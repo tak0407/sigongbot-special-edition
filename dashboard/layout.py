@@ -58,6 +58,7 @@ a{color:#2b5ce6}
 .pill.completed{background:#e7f6ec;color:#087443}
 .pill.failed{background:#fdecea;color:#b42318}
 .pill.now{background:#e8edfb;color:#1b3fa8;font-weight:600}
+tr.rest td{background:#f7f8fa;color:#667085;font-size:13px}
 .filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0}
 select,button{font:inherit;padding:6px 10px;border:1px solid #d0d5dd;border-radius:8px;background:#fff}
 textarea{font:inherit;width:100%;max-width:760px;padding:10px 12px;border:1px solid #d0d5dd;border-radius:8px;line-height:1.5;resize:vertical;margin-top:8px}

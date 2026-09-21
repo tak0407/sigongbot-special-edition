@@ -15,21 +15,41 @@ from dashboard.auth import csrf_token, require_admin
 from dashboard.common import KST, rows, separate_submission_count
 from database.sessions import (
     MAX_ANNOUNCEMENT_LENGTH,
+    MAX_POSTPONE_WEEKS,
     ScheduleError,
     add_session,
     get_template,
     list_sessions,
+    postpone_from,
     update_due_at,
 )
 from utils import format_remaining_time, get_current_session_info, tz_now
 
 LOW_REMAINING = 2
 COHORT = re.compile(r"^(\d+기)")
+# 회차는 매주 한 번이라 마감 간격이 두 주에 가까우면 회고 없이 쉬어간 주다.
+# 마감 시각을 조금 옮겨 둔 회차도 같이 잡히도록 하루 여유를 둔다.
+WEEK = 7
+REST_MIN_DAYS = WEEK * 2 - 1
+POSTPONE_CHOICES = (1, 2, 3, 4)
 
 
 def _cohort(name: str) -> str:
     matched = COHORT.match(name)
     return matched.group(1) if matched else "초기"
+
+
+def _rest_weeks(previous: dict | None, row: dict) -> int:
+    """앞 회차와의 간격에서 회고 없이 쉬어가는 주가 몇 주인지 센다.
+
+    기수가 바뀌는 자리는 원래 몇 주씩 비므로 쉬어가는 주로 보지 않는다.
+    """
+    if previous is None or _cohort(previous["name"]) != _cohort(row["name"]):
+        return 0
+    gap = (row["due_at"] - previous["due_at"]).days
+    if gap < REST_MIN_DAYS:
+        return 0
+    return max(round(gap / WEEK) - 1, 1)
 
 
 def _collect(show_all: bool) -> dict:
@@ -42,11 +62,18 @@ def _collect(show_all: bool) -> dict:
 
     current_cohort = _cohort(current_name) if current_name else _cohort(names[-1])
     items = []
+    movable = []
     upcoming = 0
+    previous = None
     for row in schedule:
         name, due = row["name"], row["due_at"]
+        # 쉬어가는 주는 걸러 내기 전에 센다. 기수만 보는 중이어도 앞뒤 회차
+        # 간격은 전체 일정에서 나온다.
+        rest_weeks = _rest_weeks(previous, row)
+        previous = row
         if due > now:
             upcoming += 1
+            movable.append(row)
         if not show_all and _cohort(name) != current_cohort:
             continue
         items.append(
@@ -61,10 +88,12 @@ def _collect(show_all: bool) -> dict:
                 # 다른 회차에 속한 것처럼 집계되므로 예정 회차만 고칠 수 있다.
                 "editable": due > now,
                 "announcement_state": state(row, now)[0],
+                "rest_weeks": rest_weeks,
             }
         )
     return {
         "items": items,
+        "movable": movable,
         "template": get_template(),
         "upcoming": upcoming,
         "current_name": current_name or "진행 중인 회차 없음",
@@ -91,9 +120,41 @@ def _due_form(request, row: dict) -> str:
     )
 
 
+def _rest_row(weeks: int) -> str:
+    return (
+        '<tr class="rest"><td colspan="6">'
+        f'쉬어가는 주 · {weeks}주 · 회고 없음'
+        "</td></tr>"
+    )
+
+
+def _postpone_form(request, data: dict) -> str:
+    """연휴로 쉬어갈 때 고른 회차부터 뒤쪽을 통째로 미루는 폼."""
+    if not data["movable"]:
+        return "<small>미룰 예정 회차가 없습니다.</small>"
+    options = "".join(
+        f'<option value="{escape(row["name"])}">'
+        f'{escape(row["name"])} · {row["due_at"].strftime("%m-%d")}'
+        f'({"월화수목금토일"[row["due_at"].weekday()]}) 마감</option>'
+        for row in data["movable"]
+    )
+    weeks = "".join(
+        f'<option value="{count}">{count}주</option>' for count in POSTPONE_CHOICES
+    )
+    return (
+        '<form method="post" action="/schedule/postpone" class="filters">'
+        f'<input type="hidden" name="csrf_token" value="{csrf_token(request)}">'
+        f'<select aria-label="미룰 첫 회차" name="name">{options}</select>'
+        f'<select aria-label="미룰 주 수" name="weeks">{weeks}</select>'
+        '<button type="submit">이 회차부터 미루기</button></form>'
+    )
+
+
 def _schedule_rows(request, data: dict) -> str:
     items = []
     for row in data["items"]:
+        if row["rest_weeks"]:
+            items.append(_rest_row(row["rest_weeks"]))
         if row["current"]:
             status = '<span class="pill now">진행 중</span>'
         elif row["past"]:
@@ -138,6 +199,18 @@ async def handle(request: web.Request) -> web.Response:
         notice = f'<div class="warn">`{escape(request.query["added"])}` 회차를 추가했습니다.</div>'
     elif request.query.get("updated"):
         notice = f'<div class="warn">`{escape(request.query["updated"])}` 마감 시각을 바꿨습니다.</div>'
+    elif request.query.get("postponed"):
+        moved = request.query.get("moved", "")
+        stale = (
+            " 이미 나간 공지에는 예전 마감이 적혀 있으니 채널에 따로 알려 주세요."
+            if request.query.get("announced")
+            else ""
+        )
+        notice = (
+            f'<div class="warn">`{escape(request.query["postponed"])}`부터 '
+            f'{escape(moved)}개 회차를 {escape(request.query.get("weeks", ""))}주씩 '
+            f"미뤘습니다.{stale}</div>"
+        )
     elif request.query.get("template"):
         notice = '<div class="warn">제출 공지 기본 문구를 저장했습니다.</div>'
     elif request.query.get("error"):
@@ -159,6 +232,12 @@ async def handle(request: web.Request) -> web.Response:
 <tbody>{_schedule_rows(request, data)}</tbody></table></div>
 <small>마감이 지난 회차는 바꿀 수 없습니다. 그 구간에 제출된 회고가 다른 회차에 속한 것처럼 집계되기 때문입니다.
 회차 이름은 회고에 그대로 기록되는 값이라 만든 뒤에는 바꿀 수 없습니다.</small>
+<h2>연휴로 회차 미루기</h2>
+<small>추석·설처럼 한 주 쉬어갈 때 씁니다. 고른 회차부터 마지막 회차까지 한꺼번에 밀리므로
+회차 이름과 순서, 회차 사이 간격은 그대로고 기수만 그만큼 늦게 끝납니다.
+아직 나가지 않은 제출 공지도 같은 간격으로 따라 밀리고, 비는 주는 위 표에 `쉬어가는 주`로 보입니다.
+한 번에 최대 {MAX_POSTPONE_WEEKS}주까지 미룰 수 있습니다.</small>
+{_postpone_form(request, data)}
 <h2>회차 추가</h2>
 <small>마지막 회차({escape(data['last_name'])}, {data['last_due'].strftime('%Y-%m-%d %H:%M')}) 뒤에만 붙일 수 있습니다.</small>
 <form method="post" action="/schedule/add" class="filters">
@@ -214,6 +293,34 @@ async def handle_add(request: web.Request) -> web.StreamResponse:
         raise _redirect(error=str(error))
     logger.info("관리자 웹에서 회차를 추가합니다 - name={} due_at={}", name, due_at)
     raise _redirect(added=name)
+
+
+def _parse_weeks(raw: str) -> int:
+    try:
+        return int((raw or "").strip())
+    except ValueError:
+        raise ScheduleError("미룰 주 수를 고르세요.") from None
+
+
+@require_admin
+async def handle_postpone(request: web.Request) -> web.StreamResponse:
+    form = await request.post()
+    name = str(form.get("name", "")).strip()
+    try:
+        weeks = _parse_weeks(str(form.get("weeks", "")))
+        moved = await asyncio.to_thread(postpone_from, name, weeks, now=tz_now())
+    except ScheduleError as error:
+        raise _redirect(error=str(error))
+    logger.info(
+        "관리자 웹에서 회차를 미룹니다 - name={} weeks={} moved={}",
+        name,
+        weeks,
+        len(moved["names"]),
+    )
+    extra = {"announced": "1"} if moved["announced"] else {}
+    raise _redirect(
+        postponed=name, weeks=weeks, moved=len(moved["names"]), **extra
+    )
 
 
 @require_admin

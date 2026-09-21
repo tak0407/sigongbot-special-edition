@@ -176,6 +176,73 @@ def update_due_at(name: str, due_at: datetime.datetime, *, now: datetime.datetim
     invalidate()
 
 
+# 연휴로 한 번에 미룰 수 있는 한도. 실수로 몇 달치 일정을 통째로 밀어 버리는
+# 일을 막는 선이고, 그보다 길게 쉬려면 나눠서 미룬다.
+MAX_POSTPONE_WEEKS = 8
+
+
+def postpone_from(name: str, weeks: int, *, now: datetime.datetime) -> dict:
+    """연휴로 한 주 쉬어갈 때, 고른 회차부터 마지막 회차까지 한꺼번에 미룬다.
+
+    회차를 하나씩 옮기면 뒤 회차와 마감이 겹치거나 순서가 뒤집힌다. 뒤쪽을
+    통째로 같은 간격만큼 미루면 회차 사이 간격과 순서가 그대로 보존되고,
+    쉬어가는 주만 일정에서 비워진다. 회차 이름은 회고 행에 박히는 조인 키라
+    건드리지 않는다.
+
+    돌려주는 값의 `announced`는 이미 공지가 나간 회차다. 그 공지 본문에는
+    옛 마감이 적혀 있어 관리자가 따로 알려야 한다.
+    """
+    if weeks < 1 or weeks > MAX_POSTPONE_WEEKS:
+        raise ScheduleError(
+            f"미룰 주 수는 1~{MAX_POSTPONE_WEEKS}주 사이여야 합니다."
+        )
+    delta = datetime.timedelta(weeks=weeks)
+
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT due_at FROM sessions WHERE name = ?", (name,)
+        ).fetchone()
+        if row is None:
+            raise ScheduleError(f"`{name}` 회차를 찾을 수 없습니다.")
+        from_due = datetime.datetime.fromisoformat(row["due_at"])
+        # 마감이 지난 회차를 옮기면 그 구간에 제출된 회고가 다른 회차에 속한
+        # 것처럼 집계된다.
+        if from_due <= now:
+            raise ScheduleError(f"이미 마감된 `{name}`부터는 미룰 수 없습니다.")
+
+        found = connection.execute(
+            "SELECT name, due_at, announce_at, announcement, announced_at"
+            "  FROM sessions"
+        ).fetchall()
+        # 저장된 시각은 오프셋 표기가 섞일 수 있어 문자열이 아니라 datetime으로
+        # 고른다.
+        targets = [row for row in map(_session, found) if row["due_at"] >= from_due]
+        targets.sort(key=lambda row: row["due_at"])
+
+        announced = []
+        for target in targets:
+            # 마감을 옮기면 아직 나가지 않은 공지도 같은 간격으로 따라 옮긴다.
+            # 그대로 두면 공지 시각이 마감 뒤로 넘어가 그 회차 공지가 조용히 빠진다.
+            announce_at = target["announce_at"]
+            if target["announced_at"] is not None:
+                announced.append(target["name"])
+            elif announce_at is not None:
+                announce_at = announce_at + delta
+            connection.execute(
+                """
+                UPDATE sessions
+                   SET due_at = ?, announce_at = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE name = ?
+                """,
+                (
+                    (target["due_at"] + delta).isoformat(),
+                    announce_at.isoformat() if announce_at else None,
+                    target["name"],
+                ),
+            )
+    invalidate()
+    return {"names": [target["name"] for target in targets], "announced": announced}
+
 # --- 매회차 제출 공지 -------------------------------------------------------
 #
 # 문구는 두 단계다. `announcement_templates`의 기본 문구가 모든 회차에 쓰이고,

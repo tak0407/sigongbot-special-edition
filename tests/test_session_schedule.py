@@ -70,6 +70,23 @@ class ScheduleTestCase(unittest.IsolatedAsyncioTestCase):
     def _query(response) -> dict:
         return parse_qs(urlparse(response.headers["Location"]).query)
 
+    def _replace_schedule(self, rows: list[tuple]) -> None:
+        """(이름, 마감, 공지 시각, 문구) 목록으로 일정을 통째로 갈아 끼운다."""
+        with get_connection() as connection:
+            connection.execute("DELETE FROM sessions")
+            for name, due, announce, body in rows:
+                connection.execute(
+                    "INSERT INTO sessions (name, due_at, announce_at, announcement)"
+                    " VALUES (?, ?, ?, ?)",
+                    (
+                        name,
+                        due.isoformat(),
+                        announce.isoformat() if announce else None,
+                        body,
+                    ),
+                )
+        sessions.invalidate()
+
 
 class ScheduleSeedTest(ScheduleTestCase):
     async def test_migration_seeds_the_schedule_from_constants(self):
@@ -210,6 +227,128 @@ class ScheduleEditTest(ScheduleTestCase):
         self.assertNotIn("/schedule/due", row)
 
 
+class PostponeTest(ScheduleTestCase):
+    """연휴로 한 주 쉬어갈 때 고른 회차부터 뒤쪽을 통째로 미룬다."""
+
+    FIRST = datetime.datetime(2099, 3, 3, 5, 0, tzinfo=KST)
+    WEEK = datetime.timedelta(days=7)
+
+    def _weekly(self, count: int = 4, *, closed: bool = False) -> list[str]:
+        """9기 회차를 한 주 간격으로 깔고 이름을 돌려준다."""
+        rows = []
+        if closed:
+            past = datetime.datetime(2020, 3, 3, 5, 0, tzinfo=KST)
+            rows.append(("9기 0회차", past, past - ANNOUNCE_LEAD, None))
+        for index in range(count):
+            due = self.FIRST + self.WEEK * index
+            rows.append((f"9기 {index + 1}회차", due, due - ANNOUNCE_LEAD, None))
+        self._replace_schedule(rows)
+        return [row[0] for row in rows]
+
+    def _due(self, name: str) -> datetime.datetime:
+        names, dues = sessions.load_schedule()
+        return dues[names.index(name)]
+
+    async def test_moves_the_chosen_session_and_every_later_one(self):
+        self._weekly()
+        response = await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        self.assertEqual(self._query(response)["postponed"], ["9기 2회차"])
+        self.assertEqual(self._query(response)["moved"], ["3"])
+
+        self.assertEqual(self._due("9기 1회차"), self.FIRST)
+        for index, name in enumerate(["9기 2회차", "9기 3회차", "9기 4회차"], start=1):
+            self.assertEqual(self._due(name), self.FIRST + self.WEEK * (index + 1))
+
+    async def test_keeps_the_order_and_leaves_one_week_empty(self):
+        """회차 사이 간격은 그대로고 쉬어가는 주만 비어야 한다."""
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 3회차", weeks="2")
+
+        _, dues = sessions.load_schedule()
+        self.assertEqual(dues, sorted(dues))
+        gaps = [(late - early).days for early, late in zip(dues, dues[1:])]
+        self.assertEqual(gaps, [7, 21, 7])
+
+    async def test_unsent_announcements_follow_the_deadline(self):
+        """공지 시각이 마감 뒤로 넘어가면 그 회차 공지가 조용히 빠진다."""
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        for name in ["9기 2회차", "9기 3회차", "9기 4회차"]:
+            session = sessions.get_session(name)
+            self.assertEqual(session["announce_at"], session["due_at"] - ANNOUNCE_LEAD)
+
+    async def test_reports_sessions_whose_announcement_already_went_out(self):
+        """이미 나간 공지에는 예전 마감이 적혀 있어 관리자가 따로 알려야 한다."""
+        self._weekly()
+        sent = datetime.datetime(2099, 2, 27, 19, 0, tzinfo=KST)
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE sessions SET announced_at = ? WHERE name = ?",
+                (sent.isoformat(), "9기 2회차"),
+            )
+        sessions.invalidate()
+
+        response = await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        self.assertEqual(self._query(response)["announced"], ["1"])
+        # 마감은 밀리지만 이미 나간 공지의 시각은 그대로 둔다.
+        session = sessions.get_session("9기 2회차")
+        self.assertEqual(session["due_at"], self.FIRST + self.WEEK * 2)
+        self.assertEqual(session["announce_at"], self.FIRST + self.WEEK - ANNOUNCE_LEAD)
+        self.assertEqual(session["announced_at"], sent)
+
+    async def test_refuses_to_postpone_from_a_closed_session(self):
+        """지난 회차를 옮기면 그 구간 제출이 다른 회차로 집계된다."""
+        self._weekly(closed=True)
+        response = await self._post("/schedule/postpone", name="9기 0회차", weeks="1")
+        self.assertIn("이미 마감된", self._query(response)["error"][0])
+        self.assertEqual(self._due("9기 1회차"), self.FIRST)
+
+    async def test_rejects_a_week_count_outside_the_limit(self):
+        self._weekly()
+        for weeks in ["0", "99", "한주"]:
+            response = await self._post("/schedule/postpone", name="9기 2회차", weeks=weeks)
+            self.assertIn("주", self._query(response)["error"][0])
+            self.assertEqual(self._due("9기 2회차"), self.FIRST + self.WEEK)
+
+    async def test_rejects_an_unknown_session(self):
+        self._weekly()
+        response = await self._post("/schedule/postpone", name="없는 회차", weeks="1")
+        self.assertIn("찾을 수 없습니다", self._query(response)["error"][0])
+
+    async def test_postponing_requires_a_csrf_token(self):
+        self._weekly()
+        response = await self.client.post(
+            "/schedule/postpone",
+            data={"name": "9기 2회차", "weeks": "1"},
+            headers=self._headers(),
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status, 403)
+        self.assertEqual(self._due("9기 2회차"), self.FIRST + self.WEEK)
+
+    async def test_page_marks_the_rest_week_between_sessions(self):
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 3회차", weeks="1")
+        response = await self.client.get("/schedule?all=1", headers=self._headers())
+        body = await response.text()
+        rest = '<tr class="rest"><td colspan="6">쉬어가는 주 · 1주 · 회고 없음</td></tr>'
+        self.assertIn(rest, body)
+        # 쉬어가는 주는 미뤄진 회차 바로 앞에 놓인다.
+        self.assertLess(body.index(rest), body.index("<td>9기 3회차</td>"))
+        self.assertGreater(body.index(rest), body.index("<td>9기 2회차</td>"))
+
+    async def test_page_does_not_call_a_cohort_break_a_rest_week(self):
+        """기수 사이는 원래 몇 주씩 비므로 쉬어가는 주로 세지 않는다."""
+        self._replace_schedule(
+            [
+                ("9기 1회차", self.FIRST, self.FIRST - ANNOUNCE_LEAD, None),
+                ("10기 1회차", self.FIRST + self.WEEK * 4, None, None),
+            ]
+        )
+        response = await self.client.get("/schedule?all=1", headers=self._headers())
+        self.assertNotIn('<tr class="rest">', await response.text())
+
+
 class AnnouncementTestCase(ScheduleTestCase):
     """공지 발송/편집 테스트가 함께 쓰는 준비 코드."""
 
@@ -219,23 +358,6 @@ class AnnouncementTestCase(ScheduleTestCase):
         await super().asyncSetUp()
         self.enterContext(patch.object(settings, "ANNOUNCEMENT_CHANNEL", "C99999999"))
         self.slack = SimpleNamespace(chat_postMessage=AsyncMock(return_value={"ts": "123.456"}))
-
-    def _replace_schedule(self, rows: list[tuple]) -> None:
-        """(이름, 마감, 공지 시각, 문구) 목록으로 일정을 통째로 갈아 끼운다."""
-        with get_connection() as connection:
-            connection.execute("DELETE FROM sessions")
-            for name, due, announce, body in rows:
-                connection.execute(
-                    "INSERT INTO sessions (name, due_at, announce_at, announcement)"
-                    " VALUES (?, ?, ?, ?)",
-                    (
-                        name,
-                        due.isoformat(),
-                        announce.isoformat() if announce else None,
-                        body,
-                    ),
-                )
-        sessions.invalidate()
 
     @staticmethod
     def _posted(mock) -> str:
