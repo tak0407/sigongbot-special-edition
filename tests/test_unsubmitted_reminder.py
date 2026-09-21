@@ -64,6 +64,8 @@ class UnsubmittedReminderTest(unittest.IsolatedAsyncioTestCase):
         self.alert = self.enterContext(
             patch.object(unsubmitted_reminder, "send_alert", AsyncMock(return_value=True))
         )
+        unsubmitted_reminder.forget_completed_sessions()
+        self.addCleanup(unsubmitted_reminder.forget_completed_sessions)
         initialize_database()
         self.client = SimpleNamespace(
             chat_postMessage=AsyncMock(return_value={"ok": True, "channel": "D11111111"}),
@@ -247,6 +249,9 @@ class UnsubmittedReminderWindowTest(unittest.IsolatedAsyncioTestCase):
         )
         invalidate_schedule()
         self.addCleanup(invalidate_schedule)
+        # 회차 완료 표시는 프로세스 전역이라 테스트마다 비운다.
+        unsubmitted_reminder.forget_completed_sessions()
+        self.addCleanup(unsubmitted_reminder.forget_completed_sessions)
         initialize_database()
         self.client = SimpleNamespace(
             chat_postMessage=AsyncMock(return_value={"ok": True, "channel": "D11111111"}),
@@ -259,6 +264,30 @@ class UnsubmittedReminderWindowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.chat_postMessage.await_count, 3)
         blocks = self.client.chat_postMessage.await_args_list[0].kwargs["blocks"]
         self.assertIn(SESSION_NAME, blocks[0]["text"]["text"])
+
+    async def test_stops_checking_once_the_session_is_done(self):
+        """실패 없이 한 바퀴를 돈 회차는 남은 발송 창을 건너뛴다."""
+        now = SESSION_DUE - datetime.timedelta(hours=1)
+        self.assertTrue(await run_unsubmitted_reminder_once(self.client, now=now))
+        self.client.chat_postMessage.reset_mock()
+
+        later = SESSION_DUE - datetime.timedelta(minutes=30)
+        self.assertFalse(await run_unsubmitted_reminder_once(self.client, now=later))
+        self.client.chat_postMessage.assert_not_awaited()
+
+    async def test_keeps_checking_while_a_failure_can_still_be_retried(self):
+        """일시적 실패가 남아 있으면 완료로 보지 않고 다음 tick에 다시 시도한다."""
+        self.client.chat_postMessage.side_effect = slack_error("internal_error")
+        self.client.chat_postEphemeral.side_effect = slack_error("user_not_in_channel")
+        now = SESSION_DUE - datetime.timedelta(hours=1)
+        self.assertTrue(await run_unsubmitted_reminder_once(self.client, now=now))
+
+        self.client.chat_postMessage.reset_mock()
+        self.client.chat_postMessage.side_effect = None
+        self.client.chat_postMessage.return_value = {"ok": True, "channel": "D11111111"}
+        later = SESSION_DUE - datetime.timedelta(minutes=30)
+        self.assertTrue(await run_unsubmitted_reminder_once(self.client, now=later))
+        self.assertEqual(self.client.chat_postMessage.await_count, 3)
 
     async def test_stays_quiet_before_the_window_opens(self):
         now = SESSION_DUE - REMINDER_LEAD - datetime.timedelta(minutes=1)

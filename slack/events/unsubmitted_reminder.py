@@ -58,6 +58,18 @@ FATAL_ERRORS = frozenset(
 )
 
 
+# 발송을 마친 회차. 멤버는 고정이고 제출자는 늘어나기만 하므로 대상 집합은
+# 줄어들 뿐이다. 실패 없이 한 바퀴를 돈 뒤에는 같은 회차를 다시 확인해도 결과가
+# 바뀌지 않으니 남은 발송 창을 건너뛴다. 프로세스 메모리에만 두기 때문에
+# 재기동하면 한 바퀴를 더 도는데, 발송 시각에 봇이 죽어 있던 경우를 그 한 바퀴가 구한다.
+_COMPLETED_SESSIONS: set[str] = set()
+
+
+def forget_completed_sessions() -> None:
+    """회차 완료 표시를 비운다. 테스트에서 회차를 갈아 끼울 때 쓴다."""
+    _COMPLETED_SESSIONS.clear()
+
+
 def reminder_key(session_name: str, user_id: str) -> str:
     """중복 발송 방지 키. 회차 이름이 들어가므로 회차마다 1인 1회가 된다."""
     return f"unsubmitted-dm:{session_name}:{user_id}"
@@ -273,9 +285,14 @@ async def run_unsubmitted_reminder_once(
     # 아래 조건에서 함께 걸러진다. 마감이 지난 회차도 같은 이유로 제외된다.
     if not (datetime.timedelta(0) < remaining <= REMINDER_LEAD):
         return False
-    await send_unsubmitted_reminders(
+    if session_name in _COMPLETED_SESSIONS:
+        return False
+    result = await send_unsubmitted_reminders(
         client, session_name=session_name, due_at=now + remaining
     )
+    # 실패가 남아 있으면 다음 tick에 다시 시도해야 하므로 완료로 표시하지 않는다.
+    if not result["failed"]:
+        _COMPLETED_SESSIONS.add(session_name)
     return True
 
 
