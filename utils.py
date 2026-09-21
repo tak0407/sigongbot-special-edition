@@ -104,6 +104,20 @@ def get_current_session_info(
     raise ValueError("현재 회차를 찾을 수 없습니다.")
 
 
+COHORT_PATTERN = re.compile(r"^(\d+기)")
+
+
+def cohort_of(session_name: str) -> str:
+    """회차 이름 앞머리에서 기수를 뽑는다.
+
+    기수는 별도 컬럼이 아니라 회차 이름의 관례("6기 3회차")로만 표현된다.
+    dashboard/schedule.py와 dashboard/members.py에도 같은 규칙이 각자 있으니
+    규칙을 바꿀 때 함께 고쳐야 한다.
+    """
+    matched = COHORT_PATTERN.match(session_name or "")
+    return matched.group(1) if matched else "초기"
+
+
 def format_remaining_time(remaining: datetime.timedelta) -> str:
     """
     남은 시간을 읽기 쉬운 형식으로 변환합니다.
