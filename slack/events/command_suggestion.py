@@ -75,6 +75,22 @@ async def handle_command_suggestion(
     )
 
 
+OPEN_SUGGESTION_ACTION_ID = "open_suggestion_modal"
+
+
+async def handle_open_suggestion_modal(
+    ack: AsyncAck, body: dict, client: AsyncWebClient
+) -> None:
+    """버튼으로 제안 모달을 연다. `/제안`과 같은 모달을 그대로 쓴다."""
+    await ack()
+    # Ephemeral 버튼에는 channel_id가 body["channel"]에 담겨 온다.
+    channel_id = (body.get("channel") or {}).get("id", "")
+    await client.views_open(
+        trigger_id=body["trigger_id"],
+        view=build_suggestion_view(channel_id),
+    )
+
+
 async def _notify_user(
     client: AsyncWebClient, *, channel: str, user_id: str, text: str
 ) -> None:
