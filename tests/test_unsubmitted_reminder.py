@@ -175,16 +175,48 @@ class UnsubmittedReminderTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(user_id, message)
 
     async def test_alerts_when_delivery_fails_entirely(self):
-        self.client.chat_postMessage.side_effect = slack_error("cannot_dm_bot")
+        """일시적 오류는 표시하지 않아 다음 tick에 다시 시도한다."""
+        self.client.chat_postMessage.side_effect = slack_error("internal_error")
         self.client.chat_postEphemeral.side_effect = slack_error("user_not_in_channel")
         result = await self.send()
         self.assertEqual(result["failed"], 3)
         self.assertFalse(await announcement_sent(reminder_key(SESSION_NAME, "U11111111")))
         self.alert.assert_awaited_once()
         message = self.alert.await_args.args[0]
-        self.assertIn("cannot_dm_bot 3명", message)
+        self.assertIn("internal_error 3명", message)
         for user_id in TEAMS:
             self.assertNotIn(user_id, message)
+
+    async def test_permanent_failure_is_not_retried_next_tick(self):
+        """다시 보내도 같은 결과인 오류는 표시해 둬야 8시간 동안 반복하지 않는다."""
+        self.client.chat_postMessage.side_effect = slack_error("cannot_dm_bot")
+        self.client.chat_postEphemeral.side_effect = slack_error("user_not_in_channel")
+        result = await self.send()
+        self.assertEqual(result["failed"], 3)
+        for user_id in TEAMS:
+            self.assertTrue(await announcement_sent(reminder_key(SESSION_NAME, user_id)))
+
+        self.client.chat_postMessage.reset_mock()
+        self.client.chat_postEphemeral.reset_mock()
+        again = await self.send()
+        self.client.chat_postMessage.assert_not_awaited()
+        self.client.chat_postEphemeral.assert_not_awaited()
+        self.assertEqual(again["failed"], 0)
+
+    async def test_scope_error_stops_the_run_instead_of_hitting_everyone(self):
+        """토큰이나 스코프 문제는 나머지에게도 같은 결과이므로 즉시 접는다."""
+        self.client.chat_postMessage.side_effect = slack_error("missing_scope")
+        result = await self.send()
+        self.assertEqual(self.client.chat_postMessage.await_count, 1)
+        self.client.chat_postEphemeral.assert_not_awaited()
+        self.assertEqual(result["failed"], 1)
+        # 다음 회차에는 다시 시도해야 하므로 발송한 것으로 표시하지 않는다.
+        for user_id in TEAMS:
+            self.assertFalse(await announcement_sent(reminder_key(SESSION_NAME, user_id)))
+        self.alert.assert_awaited_once()
+        message = self.alert.await_args.args[0]
+        self.assertIn("missing_scope", message)
+        self.assertIn("중단", message)
 
     async def test_one_failure_does_not_stop_the_rest(self):
         self.client.chat_postMessage.side_effect = [

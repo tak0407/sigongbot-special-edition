@@ -1,10 +1,9 @@
 """특정 회차 미제출자에게 본인에게만 보이는 회고 리마인더를 보낸다.
 
 누가 아직 제출하지 않았는지가 공개 채널에 드러나면 안 되므로 발송은 1:1 DM으로만
-한다. `conversations.open`은 현재 스코프로 막히지만 `chat.postMessage`의 channel에
-사용자 ID를 그대로 넘기면 Slack이 DM 채널을 잡아 준다. 봇과 DM 이력이 없는 멤버에게도
-같은 방식이 통하는지는 확인되지 않았으므로, 실패하면 본인 팀 채널의 ephemeral로
-되돌리고 어느 쪽이든 결과를 운영 알림으로 남긴다.
+한다. `chat.postMessage`의 channel에 사용자 ID를 그대로 넘기면 Slack이 DM 채널을
+잡아 주므로 `conversations.open`을 따로 부르지 않는다. 그래도 실패하는 경우가 있어
+본인 팀 채널의 ephemeral로 되돌리고, 어느 쪽이든 결과를 운영 알림으로 남긴다.
 
 미제출자 명단은 로그에도 알림에도 남기지 않는다. 남기는 것은 오류 코드와 인원 수뿐이다.
 """
@@ -32,6 +31,31 @@ SEND_INTERVAL_SECONDS = 1.0
 # ratelimited 응답에 Retry-After가 없을 때 쓸 대기 시간이다.
 DEFAULT_RETRY_AFTER_SECONDS = 1.0
 SCHEDULER_INTERVAL_SECONDS = 60
+# 다시 보내도 결과가 같은 오류들이다. 스케줄러가 60초마다 발송 창 8시간을 돌기
+# 때문에 표시해 두지 않으면 한 사람에게 같은 실패를 수백 번 반복한다.
+PERMANENT_USER_ERRORS = frozenset(
+    {
+        "user_not_found",
+        "users_not_found",
+        "invalid_user",
+        "user_disabled",
+        "is_inactive",
+        "cannot_dm_bot",
+        "restricted_action",
+    }
+)
+# 토큰이나 스코프 문제는 사람마다 확인할 필요가 없다. 한 명에게서 나왔다면
+# 나머지도 같은 결과이므로 그 회차 발송을 즉시 접는다. 다음 회차에는 다시 시도한다.
+FATAL_ERRORS = frozenset(
+    {
+        "missing_scope",
+        "not_authed",
+        "invalid_auth",
+        "token_revoked",
+        "token_expired",
+        "account_inactive",
+    }
+)
 
 
 def reminder_key(session_name: str, user_id: str) -> str:
@@ -138,6 +162,7 @@ async def send_unsubmitted_reminders(
     fallbacks: dict[str, int] = {}
     failures: dict[str, int] = {}
     sent_any = False
+    fatal_code = ""
 
     for user_id in targets:
         key = reminder_key(session_name, user_id)
@@ -163,25 +188,36 @@ async def send_unsubmitted_reminders(
                 session_name,
                 code,
             )
-            if not team_channel:
+            if code in FATAL_ERRORS:
+                # 남은 사람에게 같은 실패를 반복하지 않고 접는다.
+                fatal_code = code
                 _count(failures, code)
-                continue
-            try:
-                # ephemeral도 본인에게만 보이므로 공개 노출은 없다. 다만 새로고침하면
-                # 사라지므로 폴백이 쓰였다는 사실 자체를 운영 알림으로 올린다.
-                await post_ephemeral(
-                    client,
-                    channel=team_channel, user=user_id, text=text, blocks=blocks
-                )
-            except Exception as fallback_error:
-                logger.bind(alert=False).warning(
-                    "미제출 회고 개인 리마인더 폴백 실패 - session={}, error={}",
-                    session_name,
-                    _error_code(fallback_error),
-                )
+                break
+            reached = False
+            if team_channel:
+                try:
+                    # ephemeral도 본인에게만 보이므로 공개 노출은 없다. 다만 새로고침하면
+                    # 사라지므로 폴백이 쓰였다는 사실 자체를 운영 알림으로 올린다.
+                    await post_ephemeral(
+                        client,
+                        channel=team_channel, user=user_id, text=text, blocks=blocks
+                    )
+                except Exception as fallback_error:
+                    logger.bind(alert=False).warning(
+                        "미제출 회고 개인 리마인더 폴백 실패 - session={}, error={}",
+                        session_name,
+                        _error_code(fallback_error),
+                    )
+                else:
+                    _count(fallbacks, code)
+                    reached = True
+            if not reached:
                 _count(failures, code)
+                # 영구 오류는 다음 tick에 다시 시도해도 같은 실패이므로 끊는다.
+                # 일시적 오류라면 표시하지 않아 다음 tick에 다시 시도한다.
+                if code in PERMANENT_USER_ERRORS:
+                    await mark_announcement_sent(key)
                 continue
-            _count(fallbacks, code)
         else:
             delivered += 1
 
@@ -207,7 +243,12 @@ async def send_unsubmitted_reminders(
                     "DM 성공": f"{delivered}명",
                     "ephemeral 폴백": _counts_text(fallbacks),
                     "발송 실패": _counts_text(failures),
-                },
+                }
+                | (
+                    {"중단": f"{fatal_code} - 토큰/스코프 문제로 남은 발송을 중단했습니다"}
+                    if fatal_code
+                    else {}
+                ),
                 icon="⚠️",
             ),
             dedup_key=f"unsubmitted-reminder:{session_name}",
