@@ -196,6 +196,37 @@ class DashboardTest(AdminWebTestCase):
         body = await self._body()
         self.assertIn('<div class="card alert">게시 기록 미확인<div class="number">1건</div>', body)
 
+    async def test_dashboard_shows_words_shared_by_this_session(self):
+        """한 사람만 쓴 말은 이름표 없이 대시보드에 걸리지 않아야 한다."""
+        with get_connection() as connection:
+            connection.execute(
+                "INSERT INTO retrospectives (user_id, session_name, slack_channel,"
+                " slack_ts, good_points, improvements, learnings, action_item)"
+                " VALUES ('U22222222', '6기 1회차', 'C11111111', '4.0',"
+                " '면접 준비', '이력서', '혼자만의고민', '면접')"
+            )
+            connection.execute(
+                "UPDATE retrospectives SET good_points = '면접 준비'"
+                " WHERE user_id = 'U11111111' AND session_name = '6기 1회차'"
+            )
+        body = await self._body()
+        self.assertIn("이번 회차에 자주 나온 말", body)
+        self.assertIn('class="cloud"', body)
+        self.assertIn(">면접<", body)
+        self.assertNotIn("혼자만의고민", body)
+
+    async def test_dashboard_word_cloud_ignores_test_submissions(self):
+        with get_connection() as connection:
+            for index in range(2):
+                connection.execute(
+                    "INSERT INTO retrospectives (user_id, session_name, slack_channel,"
+                    " slack_ts, good_points, improvements, learnings, action_item,"
+                    " is_test_submission) VALUES (?, '6기 1회차', 'C11111111', ?,"
+                    " '테스트낱말', '테스트낱말', '테스트낱말', '테스트낱말', 1)",
+                    (f"U9999999{index}", f"9.{index}"),
+                )
+        self.assertNotIn("테스트낱말", await self._body())
+
     async def test_dashboard_auto_refreshes(self):
         body = await self._body()
         self.assertIn('http-equiv="refresh"', body)

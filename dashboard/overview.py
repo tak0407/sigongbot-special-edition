@@ -8,6 +8,7 @@ from aiohttp import web
 from config import settings
 from dashboard import directory as slack_directory
 from dashboard import layout
+from dashboard import wordcloud
 from dashboard.auth import require_admin
 from dashboard.common import (
     REFRESH_SECONDS, rows, to_kst, separate_submission_badge, separate_submission_count,
@@ -83,6 +84,15 @@ def _collect() -> dict:
             (RECENT_LIMIT,),
         ).fetchall()
         trend = session_submission_counts(connection)[:TREND_LIMIT]
+        # 낱말은 회고 한 건을 한 사람으로 세므로 본문 칸을 건별로 이어 붙인다.
+        texts = [
+            "\n".join(value or "" for value in row)
+            for row in connection.execute(
+                f"SELECT {', '.join(wordcloud.WORD_FIELDS)} FROM retrospectives"
+                " WHERE session_name = ? AND is_test_submission = 0",
+                (session_name,),
+            )
+        ]
     separate = submitted & separate_submitter_ids()
     submitted -= separate
     return {
@@ -101,6 +111,8 @@ def _collect() -> dict:
         "pending_posts": pending_posts,
         "recent": [dict(row) for row in recent],
         "trend": list(reversed(trend)),
+        "words": wordcloud.count_words(texts),
+        "word_sources": len(texts),
         "generated_at": tz_now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -197,6 +209,10 @@ async def handle(request: web.Request) -> web.Response:
 </section>
 <h2>팀별 제출 현황</h2><small>미제출자는 Slack에 그대로 붙여 넣으면 멘션으로 바뀝니다.</small>
 <p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>채널</th><th>제출</th><th>패스</th><th>미제출</th><th>미제출자</th></tr></thead><tbody>{_team_rows(data, directory)}</tbody></table></div>
+<h2>이번 회차에 자주 나온 말</h2>
+<small>{escape(data['session_name'])} 회고 {data['word_sources']}건에서 두 명 이상이 쓴 낱말입니다.
+크기는 쓴 사람 수이고, 형태소 분석기 없이 조사·어미만 잘라 세므로 어림값입니다. 집계 수치로 쓰지 마세요.</small>
+{wordcloud.render(data['words'])}
 <h2>회차별 제출 추이</h2><small>최근 {TREND_LIMIT}개 회차의 제출자 수입니다. 기수마다 인원이 달라 비율이 아닌 인원으로 표시합니다.</small>
 <p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>제출자</th><th></th></tr></thead><tbody>{_trend_rows(data)}</tbody></table></div>
 <h2>최근 제출</h2><small>제출 시각을 누르면 Slack 메시지로 이동합니다.</small>
