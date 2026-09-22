@@ -287,7 +287,8 @@ class PostponeTest(WeeklyScheduleTestCase):
         extra = sessions.get_session("9기 추가 회차")
         self.assertEqual(extra["due_at"], self.FIRST + self.WEEK)
         self.assertTrue(extra["resting"])
-        self.assertIsNone(extra["announce_at"])
+        # 공지 시각은 채워 두지만 쉬어가는 동안은 나가지 않는다.
+        self.assertEqual(extra["announce_at"], extra["due_at"] - ANNOUNCE_LEAD)
         self.assertNotIn("9기 추가 회차", sessions.load_schedule()[0])
         self.assertEqual(sessions.pending_announcements(self.FIRST), [])
 
@@ -455,6 +456,10 @@ class RenameAndRestTest(WeeklyScheduleTestCase):
         self.assertEqual(dues, sorted(dues))
         # 회차로 쓰기로 해도 남은 회차 마감은 그대로다.
         self.assertEqual(self._due("9기 2회차"), self.FIRST + self.WEEK * 2)
+        # 회차로 쓰면 다른 회차처럼 제출 공지가 나간다.
+        extra = sessions.get_session("9기 추가 회차")
+        pending = sessions.pending_announcements(extra["announce_at"])
+        self.assertEqual([row["name"] for row in pending], ["9기 추가 회차"])
 
         response = await self._post(
             "/schedule/rest", name="9기 추가 회차", resting="1"

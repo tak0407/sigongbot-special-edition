@@ -60,6 +60,9 @@ def state(session: dict, now: datetime.datetime) -> tuple[str, str]:
         )
     if session["due_at"] <= now:
         return '<span class="pill">마감</span>', "이미 마감된 회차입니다."
+    # 쉬어가는 주는 공지 시각이 있어도 나가지 않는다. 회차로 쓰면 그 시각에 나간다.
+    if session.get("resting"):
+        return '<span class="pill">쉬어가는 동안 공지 없음</span>', ""
     if session["announce_at"] is None:
         return '<span class="pill failed">공지 꺼짐</span>', ""
     when = session["announce_at"].strftime("%m-%d %H:%M")

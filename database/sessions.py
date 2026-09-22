@@ -256,12 +256,13 @@ def postpone_from(name: str, weeks: int, *, now: datetime.datetime) -> dict:
             new_name = _filler_name(connection, name)
             # 쉬어가는 주로 세운다. 연휴라 미룬 주이므로 그대로 두면 그 주는
             # 회고 없이 지나가고, 보충 회차로 쓸 때만 관리자가 토글을 끈다.
-            # 공지 시각도 비워 둔다. 자동으로 만든 회차가 관리자도 모르는 새
-            # 채널에 공지로 나가면 안 된다.
+            # 공지 시각은 기본값으로 채워 둔다. 쉬어가는 동안은 발송 대상에서
+            # 빠지므로 관리자 모르게 나가지 않고, 회차로 쓰기로 하면 다른
+            # 회차처럼 공지가 나간다.
             connection.execute(
                 "INSERT INTO sessions (name, due_at, announce_at, resting)"
-                " VALUES (?, ?, NULL, 1)",
-                (new_name, due.isoformat()),
+                " VALUES (?, ?, ?, 1)",
+                (new_name, due.isoformat(), default_announce_at(due).isoformat()),
             )
             filled.append(new_name)
     invalidate()
