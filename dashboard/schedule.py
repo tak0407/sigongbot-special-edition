@@ -10,7 +10,7 @@ from aiohttp import web
 from loguru import logger
 
 from dashboard import layout
-from dashboard.announcement import PLACEHOLDER_HELP, state
+from dashboard.announcement import PLACEHOLDER_HELP, announcement_dialog, state
 from dashboard.auth import csrf_token, require_admin
 from dashboard.common import KST, rows, separate_submission_count
 from database.sessions import (
@@ -108,6 +108,7 @@ def _collect(show_all: bool) -> dict:
         "items": items,
         "movable": movable,
         "template": get_template(),
+        "now": now,
         "upcoming": upcoming,
         "current_name": current_name or "진행 중인 회차 없음",
         "current_cohort": current_cohort,
@@ -168,7 +169,7 @@ def _withdraw_form(token: str, name: str) -> str:
     )
 
 
-def _edit_dialog(request, row: dict, dialog_id: str) -> str:
+def _edit_dialog(request, row: dict, dialog_id: str, announce_id: str) -> str:
     """회차 하나를 고치는 모달. 표에는 이 모달을 여는 `편집` 버튼만 둔다.
 
     예정 회차는 마감을, 아직 기록이 붙지 않은 회차는 이름과 쉬어가기를,
@@ -176,7 +177,6 @@ def _edit_dialog(request, row: dict, dialog_id: str) -> str:
     """
     token = csrf_token(request)
     name = escape(row["name"])
-    link = f'/schedule/announcement?{urlencode({"name": row["name"]})}'
     parts = [_due_form(token, row)]
     if row["changeable"]:
         parts.append(_rename_form(token, name))
@@ -193,7 +193,7 @@ def _edit_dialog(request, row: dict, dialog_id: str) -> str:
         )
     parts.append(
         f'<div class="field"><small>제출 공지</small>{row["announcement_state"]}'
-        f' <a href="{link}">문구·공지 시각 편집</a></div>'
+        f' <button type="button" data-dialog="{announce_id}">문구·공지 시각 편집</button></div>'
     )
     due = f"{row['due'].strftime('%Y-%m-%d %H:%M')} ({'월화수목금토일'[row['due'].weekday()]})"
     return (
@@ -254,18 +254,30 @@ def _schedule_rows(request, data: dict) -> tuple[str, str]:
         else:
             status = '<span class="pill pending">예정</span>'
         edit = ""
+        notice_cell = row["announcement_state"]
         # 마감이 지난 회차는 고칠 게 없어 버튼을 두지 않는다.
         if row["editable"]:
             dialog_id = f"edit-{index}"
-            dialogs.append(_edit_dialog(request, row, dialog_id))
+            announce_id = f"announce-{index}"
+            dialogs.append(_edit_dialog(request, row, dialog_id, announce_id))
+            dialogs.append(
+                announcement_dialog(
+                    request, row, announce_id, template=data["template"], now=data["now"]
+                )
+            )
             edit = f'<button type="button" data-dialog="{dialog_id}">편집</button>'
+            # 공지 상태를 누르면 바로 공지 모달이 열린다.
+            notice_cell = (
+                f'<button type="button" class="link" data-dialog="{announce_id}"'
+                f' aria-label="{escape(row["name"])} 제출 공지 편집">{notice_cell}</button>'
+            )
         items.append(
             "<tr>"
             f"<td>{escape(row['name'])}</td>"
             f"<td>{row['due'].strftime('%Y-%m-%d %H:%M')} ({'월화수목금토일'[row['due'].weekday()]})</td>"
             f"<td>{status}</td>"
             f"<td>{row['submitters']}명{separate_submission_count(row['separate_submissions'])}</td>"
-            f"<td>{row['announcement_state']}</td>"
+            f"<td>{notice_cell}</td>"
             f"<td>{edit}</td>"
             "</tr>"
         )
@@ -337,6 +349,17 @@ async def handle(request: web.Request) -> web.Response:
             f'<div class="warn">`{escape(request.query["working"])}`을(를) 회차로 씁니다. '
             "공지를 보내려면 그 회차의 `문구`에서 공지 시각을 정하세요.</div>"
         )
+    elif request.query.get("announcement"):
+        target = escape(request.query["announcement"])
+        result = request.query.get("result")
+        message = {
+            "saved": f"`{target}` 공지 문구를 저장했습니다.",
+            "reset": f"`{target}` 공지가 기본 문구를 쓰도록 되돌렸습니다.",
+            "scheduled": f"`{target}` 공지 시각을 {escape(request.query.get('at', ''))}로 바꿨습니다.",
+            "off": f"`{target}`은(는) 공지를 보내지 않습니다.",
+        }.get(result)
+        if message:
+            notice = f'<div class="warn">{message}</div>'
     elif request.query.get("template"):
         notice = '<div class="warn">제출 공지 기본 문구를 저장했습니다.</div>'
     elif request.query.get("error"):
@@ -378,7 +401,7 @@ async def handle(request: web.Request) -> web.Response:
 <dialog id="template-dialog" aria-labelledby="template-title">
 <div class="dialog-head"><h2 id="template-title">제출 공지 기본 문구</h2><form method="dialog"><button aria-label="닫기">✕</button></form></div>
 <small>공지 시각이 되면 이 문구가 회차마다 나갑니다. {PLACEHOLDER_HELP}
-특정 회차만 다르게 쓰려면 그 회차 `편집`의 `문구·공지 시각 편집`에서 덮어씁니다.</small>
+특정 회차만 다르게 쓰려면 회차 목록의 공지 칸을 눌러 그 회차만 덮어씁니다.</small>
 <form method="post" action="/schedule/announcement/template">
 <input type="hidden" name="csrf_token" value="{csrf_token(request)}">
 <textarea aria-label="공지 문구" name="body" rows="8" maxlength="{MAX_ANNOUNCEMENT_LENGTH}" required>{escape(data['template'])}</textarea>
@@ -398,6 +421,8 @@ async def handle(request: web.Request) -> web.Response:
  document.addEventListener('click', (event) => {{
   const opener = event.target.closest('[data-dialog]');
   if (opener) {{
+   const current = opener.closest('dialog');
+   if (current) current.close();
    document.getElementById(opener.dataset.dialog).showModal();
    return;
   }}

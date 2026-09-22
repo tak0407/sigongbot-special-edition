@@ -70,6 +70,8 @@ dialog::backdrop{background:rgba(16,24,40,.45)}
 .dialog-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .dialog-head h2{margin:0}
 .dialog-head button{border:0;background:none;font-size:18px;color:#667085}
+button.link{border:0;background:none;padding:0;min-height:0;text-align:left;cursor:pointer}
+dialog .body-field .text{max-height:220px;overflow:auto}
 .cloud{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;list-style:none;margin:14px 0;padding:14px;background:#f7f8fa;border-radius:12px}
 .cloud .word{line-height:1.25;color:#667085}
 .cloud .word.strong{color:#1b3fa8;font-weight:600}
@@ -92,7 +94,7 @@ form.inline button{padding:5px 9px;font-size:13px}
 .warn{background:#fff5e6;border:1px solid #f5c77e;border-radius:10px;padding:14px;margin:18px 0}
 
 /* Keep wide lists scrollable without moving the entire page. */
-.table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:#98a2b3 #f2f4f7}
 .table-scroll table{min-width:600px}
 .table-scroll th,.table-scroll td{overflow-wrap:anywhere}
 .table-scroll td{max-width:360px}
@@ -111,17 +113,22 @@ form.inline,.pager{flex-wrap:wrap}
  .brand{padding:0 0 8px}
  .menu summary{display:flex;align-items:center;min-height:44px;cursor:pointer;color:#1b3fa8;font-weight:600}
  .menu summary::before{content:"☰";margin-right:10px}
+ .menu summary::after{content:"⌄";margin-left:auto;font-size:18px;transition:transform .15s ease}
+ .menu[open] summary::after{transform:rotate(180deg)}
  .menu:not([open])>.menu-content{display:none}
- .menu-links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
- .side a{padding:12px 8px;min-height:44px}
+ .menu-links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+ .side a{display:flex;align-items:center;padding:10px 8px;min-height:44px;background:#fff;border:1px solid #e4e7ec;border-left:3px solid transparent;border-radius:8px;line-height:1.3}
+ .side a.on{border-color:#c7d2fe;border-left-color:#2b5ce6}
  .side .hint{display:none}
  .account{padding:12px 0 0;display:flex;align-items:center;justify-content:space-between;gap:12px}
  .account form{margin:0}
  main{padding:20px 16px 40px}
- header{gap:8px}
+ header{display:block}
+ header small{display:block;margin-top:6px;line-height:1.5}
+ h2{margin-top:26px}
  .cards{grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
  .card{padding:14px;min-width:0}
- .number{font-size:24px}
+ .number{font-size:22px;line-height:1.3;overflow-wrap:anywhere}
  .table-hint{display:block;margin:8px 0;font-size:12px;color:#667085}
  th,td{padding:10px 8px}
  .table-scroll th,.table-scroll td{min-width:90px}

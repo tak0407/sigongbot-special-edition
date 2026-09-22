@@ -302,14 +302,22 @@ def _login_page(*, csrf: str, next_path: str, error: str = "") -> str:
     return f"""<!doctype html><html lang="ko"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>관리자 로그인</title><style>
 *{{box-sizing:border-box}}
-body{{padding:0 16px;overflow-wrap:anywhere;font-family:system-ui,sans-serif;background:#f5f7fa;margin:0;color:#202124}}
-main{{width:100%;max-width:440px;margin:10vh auto;background:white;padding:30px;border-radius:14px;box-shadow:0 8px 30px #0001}}
-input,button{{font:inherit;font-size:16px;min-height:44px}}
-:focus-visible{{outline:3px solid #2b5ce6;outline-offset:3px}}
-@media(max-width:480px){{main{{padding:24px 20px;margin:5vh auto}}h1{{font-size:24px}}}}
-label{{display:block;margin:16px 0 6px}}input{{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccd1d9;border-radius:8px}}
-button{{width:100%;margin-top:22px;padding:10px;border:0;border-radius:8px;background:#2b5ce6;color:white;font-weight:600}}
-.error{{color:#b42318}}small{{color:#667085}}</style><body><main><h1>시공삶 관리자</h1>
+:root{{color-scheme:light;--ink:#182230;--muted:#667085;--line:#e4e7ec;--brand:#3157d5;--brand-dark:#2444b4}}
+body{{min-height:100vh;display:grid;place-items:center;padding:24px;overflow-wrap:anywhere;font:15px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(ellipse at 50% 0%,#e5edff 0,transparent 48%),#f3f6fb;margin:0;color:var(--ink)}}
+main{{width:100%;max-width:440px;margin:0;background:#fff;padding:36px;border:1px solid #e4e7ec;border-radius:20px;box-shadow:0 20px 55px #18223012}}
+h1{{display:flex;align-items:center;gap:12px;margin:0 0 8px;font-size:25px;line-height:1.25;letter-spacing:-.02em;color:#101828}}
+h1::before{{content:"시";display:grid;place-items:center;width:36px;height:36px;flex:0 0 36px;border-radius:11px;background:var(--brand);color:#fff;font-size:15px}}
+small{{display:block;color:var(--muted);line-height:1.5}}
+input,button{{font:inherit;font-size:16px;min-height:46px}}
+:focus-visible{{outline:3px solid #84a5ff;outline-offset:2px}}
+label{{display:block;margin:18px 0 6px;font-size:13px;font-weight:650;color:#344054}}
+input:not([type=hidden]){{width:100%;padding:11px 12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff;color:var(--ink)}}
+input:not([type=hidden]):focus{{border-color:var(--brand);box-shadow:0 0 0 3px #3157d51c;outline:0}}
+button{{width:100%;margin-top:24px;padding:11px 14px;border:1px solid var(--brand);border-radius:10px;background:var(--brand);color:white;font-weight:650;cursor:pointer;box-shadow:0 5px 12px #3157d52b}}
+button:hover{{background:var(--brand-dark);border-color:var(--brand-dark)}}
+.error{{padding:11px 12px;border:1px solid #f2c3c0;border-radius:10px;background:#fff3f2;color:#b42318;line-height:1.45}}
+@media(max-width:480px){{body{{padding:16px}}main{{padding:28px 22px;border-radius:17px}}h1{{font-size:23px}}}}
+</style><body><main><h1>시공삶 관리자</h1>
 <small>관리자 계정으로 로그인하세요.</small>{notice}
 <form method="post" action="/login"><input type="hidden" name="csrf_token" value="{escape(csrf)}">
 <input type="hidden" name="next" value="{escape(next_path)}"><label for="username">계정명</label>

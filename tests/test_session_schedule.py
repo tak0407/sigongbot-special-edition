@@ -551,7 +551,8 @@ class RenameAndRestTest(WeeklyScheduleTestCase):
         dialog = self._dialog(body, "9기 2회차")
         for action in ("/schedule/due", "/schedule/rename", "/schedule/rest"):
             self.assertIn(f'action="{action}"', dialog)
-        self.assertIn("/schedule/announcement?name=", dialog)
+        # 편집 모달에서 그 회차의 공지 모달로 넘어갈 수 있다.
+        self.assertIn('data-dialog="announce-', dialog)
         # 모달은 표 밖에 둔다. 칸 폭과 가로 스크롤을 물려받지 않게 하려는 것이다.
         self.assertGreater(body.index('data-session="9기 2회차"'), body.index("</table>"))
 
@@ -807,11 +808,12 @@ class AnnouncementEditTest(AnnouncementTestCase):
         response = await self._post(
             "/schedule/announcement", name=name, body="이 회차만 다른 문구"
         )
-        self.assertEqual(self._query(response)["saved"], ["1"])
+        self.assertEqual(self._query(response)["result"], ["saved"])
+        self.assertEqual(urlparse(response.headers["Location"]).path, "/schedule")
         self.assertEqual(sessions.get_session(name)["announcement"], "이 회차만 다른 문구")
 
         response = await self._post("/schedule/announcement", name=name, body="", reset="1")
-        self.assertEqual(self._query(response)["reset"], ["1"])
+        self.assertEqual(self._query(response)["result"], ["reset"])
         self.assertIsNone(sessions.get_session(name)["announcement"])
 
     async def test_moves_and_turns_off_the_announce_time(self):
@@ -823,7 +825,7 @@ class AnnouncementEditTest(AnnouncementTestCase):
             name=name,
             announce_at=moved.strftime("%Y-%m-%dT%H:%M"),
         )
-        self.assertIn("scheduled", self._query(response))
+        self.assertEqual(self._query(response)["result"], ["scheduled"])
         self.assertEqual(sessions.get_session(name)["announce_at"], moved)
 
         response = await self._post(
@@ -832,7 +834,7 @@ class AnnouncementEditTest(AnnouncementTestCase):
             announce_at=moved.strftime("%Y-%m-%dT%H:%M"),
             off="1",
         )
-        self.assertEqual(self._query(response)["off"], ["1"])
+        self.assertEqual(self._query(response)["result"], ["off"])
         self.assertIsNone(sessions.get_session(name)["announce_at"])
 
     async def test_refuses_an_announce_time_after_the_due_date(self):
@@ -874,20 +876,45 @@ class AnnouncementEditTest(AnnouncementTestCase):
             sessions.get_session(name)["announce_at"], moved - ANNOUNCE_LEAD
         )
 
+    def _announcement_dialog(self, body: str, name: str) -> str:
+        marker = f'data-announcement="{name}"'
+        self.assertIn(marker, body)
+        return body.split(marker, 1)[1].split("</dialog>", 1)[0]
+
     async def test_editor_shows_the_rendered_preview(self):
         name = self._upcoming()
-        await self._post("/schedule/announcement", name=name, body="미리보기 {회차} 확인")
-        response = await self.client.get(
-            f"/schedule/announcement?name={quote(name)}", headers=self._headers()
-        )
-        body = await response.text()
-        self.assertIn(f"미리보기 {name} 확인", body)
+        response = await self._post("/schedule/announcement", name=name, body="미리보기 {회차} 확인")
+        body = await (await self.client.get(response.headers["Location"], headers=self._headers())).text()
+        # 저장 결과는 회차 일정 위쪽에, 미리보기는 그 회차의 공지 모달에 나온다.
+        self.assertLess(body.index(f"`{name}` 공지 문구를 저장했습니다"), body.index("<table>"))
+        self.assertIn(f"미리보기 {name} 확인", self._announcement_dialog(body, name))
 
-    async def test_schedule_page_links_to_each_announcement(self):
-        response = await self.client.get("/schedule", headers=self._headers())
-        body = await response.text()
+    async def test_schedule_page_opens_each_announcement_in_a_dialog(self):
+        name = self._upcoming()
+        body = await (await self.client.get("/schedule", headers=self._headers())).text()
         self.assertIn("제출 공지 기본 문구", body)
-        self.assertIn("/schedule/announcement?name=", body)
+        dialog = self._announcement_dialog(body, name)
+        for action in ("/schedule/announcement/time", "/schedule/announcement"):
+            self.assertIn(f'action="{action}"', dialog)
+        # 표의 공지 칸을 누르면 그 모달이 열린다.
+        row = body.split(f"<td>{name}</td>", 1)[1].split("</tr>", 1)[0]
+        self.assertIn('class="link" data-dialog="announce-', row)
+
+    async def test_sent_announcement_dialog_explains_why_it_cannot_change(self):
+        name = self._upcoming()
+        sessions.mark_announced(name, tz_now())
+        body = await (await self.client.get("/schedule", headers=self._headers())).text()
+        dialog = self._announcement_dialog(body, name)
+        self.assertIn("이미 나간 공지입니다", dialog)
+        self.assertNotIn("<textarea", dialog)
+
+    async def test_old_editor_address_goes_to_the_schedule(self):
+        response = await self.client.get(
+            f"/schedule/announcement?name={quote(self._upcoming())}",
+            headers=self._headers(), allow_redirects=False,
+        )
+        self.assertEqual(response.status, 302)
+        self.assertEqual(response.headers["Location"], "/schedule")
 
     async def test_editing_requires_a_session_and_csrf_token(self):
         response = await self.client.post(
