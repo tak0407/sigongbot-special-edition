@@ -59,14 +59,17 @@ a{color:#2b5ce6}
 .pill.failed{background:#fdecea;color:#b42318}
 .pill.now{background:#e8edfb;color:#1b3fa8;font-weight:600}
 tr.rest td{background:#f7f8fa;color:#667085;font-size:13px}
-.manage summary,.section summary{cursor:pointer;color:#2b5ce6;font-weight:600}
-.manage[open]{min-width:280px}
-.manage .field{margin-top:10px}
-.manage .field>small{display:block;margin-bottom:4px}
-.manage .actions{display:flex;gap:6px;flex-wrap:wrap}
-.section{margin-top:28px}
-.section summary{font-size:16px;margin-bottom:8px}
+.field{margin-top:14px}
+.field>small{display:block;margin-bottom:4px}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
 button.danger{border-color:#b42318;color:#b42318}
+button.primary{background:#2b5ce6;border-color:#2b5ce6;color:#fff}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+dialog{border:0;border-radius:12px;padding:18px 22px 22px;width:min(560px,calc(100% - 32px));box-shadow:0 12px 40px rgba(16,24,40,.25)}
+dialog::backdrop{background:rgba(16,24,40,.45)}
+.dialog-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.dialog-head h2{margin:0}
+.dialog-head button{border:0;background:none;font-size:18px;color:#667085}
 .cloud{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;list-style:none;margin:14px 0;padding:14px;background:#f7f8fa;border-radius:12px}
 .cloud .word{line-height:1.25;color:#667085}
 .cloud .word.strong{color:#1b3fa8;font-weight:600}

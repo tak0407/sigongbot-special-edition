@@ -67,6 +67,14 @@ class ScheduleTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
     @staticmethod
+    def _dialog(body: str, name: str) -> str:
+        """그 회차의 편집 모달. 없으면 빈 문자열."""
+        marker = f'data-session="{name}"'
+        if marker not in body:
+            return ""
+        return body.split(marker, 1)[1].split("</dialog>", 1)[0]
+
+    @staticmethod
     def _query(response) -> dict:
         return parse_qs(urlparse(response.headers["Location"]).query)
 
@@ -221,10 +229,11 @@ class ScheduleEditTest(ScheduleTestCase):
         response = await self.client.get("/schedule?all=1", headers=self._headers())
         body = await response.text()
         self.assertIn("회차 추가", body)
-        # 마감된 회차 행에는 변경 폼이 없다.
+        # 마감된 회차에는 편집 버튼도 모달도 없다.
         closed = sessions.load_schedule()[0][0]
-        row = body[body.index(f"<td>{closed}</td>") :][:600]
-        self.assertNotIn("/schedule/due", row)
+        row = body.split(f"<td>{closed}</td>", 1)[1].split("</tr>", 1)[0]
+        self.assertNotIn("편집", row)
+        self.assertEqual(self._dialog(body, closed), "")
 
 
 class WeeklyScheduleTestCase(ScheduleTestCase):
@@ -517,12 +526,41 @@ class RenameAndRestTest(WeeklyScheduleTestCase):
         body = await (await self.client.get(location, headers=self._headers())).text()
         self.assertLess(body.index("미뤘습니다"), body.index("<table>"))
 
+    async def test_page_opens_postpone_add_and_template_in_dialogs(self):
+        """자주 안 쓰는 폼은 버튼 뒤 모달에 두고, 표 위에는 버튼만 보인다."""
+        self._weekly()
+        body = await (await self.client.get("/schedule", headers=self._headers())).text()
+        for dialog, action in [
+            ("postpone-dialog", "/schedule/postpone"),
+            ("add-dialog", "/schedule/add"),
+            ("template-dialog", "/schedule/announcement/template"),
+        ]:
+            self.assertIn(f'data-dialog="{dialog}"', body)
+            inside = body.split(f'<dialog id="{dialog}"', 1)[1].split("</dialog>", 1)[0]
+            self.assertIn(f'action="{action}"', inside)
+        # 버튼 줄은 회차 목록 표보다 위에 있다.
+        self.assertLess(body.index('class="toolbar"'), body.index("<table>"))
+
+    async def test_each_session_is_edited_in_its_own_dialog(self):
+        """표 행에는 폼 없이 `편집` 버튼만 두고, 고치는 일은 모달에서 한다."""
+        self._weekly()
+        body = await (await self.client.get("/schedule", headers=self._headers())).text()
+        row = body.split("<td>9기 2회차</td>", 1)[1].split("</tr>", 1)[0]
+        self.assertIn(">편집</button>", row)
+        self.assertNotIn("<form", row)
+        dialog = self._dialog(body, "9기 2회차")
+        for action in ("/schedule/due", "/schedule/rename", "/schedule/rest"):
+            self.assertIn(f'action="{action}"', dialog)
+        self.assertIn("/schedule/announcement?name=", dialog)
+        # 모달은 표 밖에 둔다. 칸 폭과 가로 스크롤을 물려받지 않게 하려는 것이다.
+        self.assertGreater(body.index('data-session="9기 2회차"'), body.index("</table>"))
+
     async def test_page_offers_withdraw_only_on_resting_weeks(self):
         self._weekly()
         await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
         body = await (await self.client.get("/schedule?all=1", headers=self._headers())).text()
-        resting = body.split("<td>9기 추가 회차</td>", 1)[1].split("</tr>", 1)[0]
-        working = body.split("<td>9기 3회차</td>", 1)[1].split("</tr>", 1)[0]
+        resting = self._dialog(body, "9기 추가 회차")
+        working = self._dialog(body, "9기 3회차")
         self.assertIn("/schedule/withdraw", resting)
         self.assertIn(">삭제하기</button>", resting)
         # 뒤 회차 마감이 전부 움직이므로 누르기 전에 알린다.
@@ -550,9 +588,12 @@ class RenameAndRestTest(WeeklyScheduleTestCase):
         self.assertIn('action="/schedule/rename"', body)
         # 마감된 회차와 제출이 있는 회차에는 폼이 붙지 않는다.
         for name in ("9기 0회차", "9기 2회차"):
-            row = body.split(f"<td>{name}</td>", 1)[1].split("</tr>", 1)[0]
-            self.assertNotIn("/schedule/rename", row)
-            self.assertNotIn("/schedule/rest", row)
+            dialog = self._dialog(body, name)
+            self.assertNotIn("/schedule/rename", dialog)
+            self.assertNotIn("/schedule/rest", dialog)
+        # 제출이 있는 회차는 마감만 고칠 수 있고, 왜 이름을 못 바꾸는지 알린다.
+        self.assertIn("/schedule/due", self._dialog(body, "9기 2회차"))
+        self.assertIn("바꿀 수 없습니다", self._dialog(body, "9기 2회차"))
 
     async def test_page_marks_a_resting_week_and_offers_the_way_back(self):
         self._weekly()
@@ -561,7 +602,7 @@ class RenameAndRestTest(WeeklyScheduleTestCase):
 
         row = body.split("<td>9기 추가 회차</td>", 1)[1].split("</tr>", 1)[0]
         self.assertIn('<span class="pill">쉬어가는 주</span>', row)
-        self.assertIn("회차로 쓰기", row)
+        self.assertIn("회차로 쓰기", self._dialog(body, "9기 추가 회차"))
         # 쉬어가는 주는 남은 회차 수에 들어가지 않는다.
         self.assertIn('남은 회차<div class="number">4개</div>', body)
 

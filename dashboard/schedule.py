@@ -168,24 +168,41 @@ def _withdraw_form(token: str, name: str) -> str:
     )
 
 
-def _manage_cell(request, row: dict) -> str:
-    """행 편집을 `관리` 하나로 접는다.
+def _edit_dialog(request, row: dict, dialog_id: str) -> str:
+    """회차 하나를 고치는 모달. 표에는 이 모달을 여는 `편집` 버튼만 둔다.
 
     예정 회차는 마감을, 아직 기록이 붙지 않은 회차는 이름과 쉬어가기를,
-    쉬어가는 주는 삭제까지 고칠 수 있다. 고칠 게 없는 지난 회차는 비워 둔다.
+    쉬어가는 주는 삭제까지 고칠 수 있다. 못 고치는 칸은 왜 못 고치는지 적는다.
     """
-    if not row["editable"]:
-        return ""
     token = csrf_token(request)
     name = escape(row["name"])
+    link = f'/schedule/announcement?{urlencode({"name": row["name"]})}'
     parts = [_due_form(token, row)]
     if row["changeable"]:
         parts.append(_rename_form(token, name))
         actions = _rest_form(token, name, row)
         if row["resting"]:
             actions += _withdraw_form(token, name)
-        parts.append(f'<div class="field"><small>쉬어가기</small><div class="actions">{actions}</div></div>')
-    return f'<details class="manage"><summary>관리</summary>{"".join(parts)}</details>'
+        parts.append(
+            f'<div class="field"><small>쉬어가기</small><div class="actions">{actions}</div></div>'
+        )
+    else:
+        parts.append(
+            '<p><small>제출이나 공지가 이미 있어 이름과 쉬어가기는 바꿀 수 없습니다.'
+            " 회차 이름은 회고 기록에 그대로 박히는 값입니다.</small></p>"
+        )
+    parts.append(
+        f'<div class="field"><small>제출 공지</small>{row["announcement_state"]}'
+        f' <a href="{link}">문구·공지 시각 편집</a></div>'
+    )
+    due = f"{row['due'].strftime('%Y-%m-%d %H:%M')} ({'월화수목금토일'[row['due'].weekday()]})"
+    return (
+        f'<dialog id="{dialog_id}" data-session="{name}" aria-labelledby="{dialog_id}-title">'
+        f'<div class="dialog-head"><h2 id="{dialog_id}-title">{name}</h2>'
+        '<form method="dialog"><button aria-label="닫기">✕</button></form></div>'
+        f"<small>마감 {due}</small>"
+        f'{"".join(parts)}</dialog>'
+    )
 
 
 def _rest_row(weeks: int) -> str:
@@ -214,13 +231,18 @@ def _postpone_form(request, data: dict) -> str:
         f'<input type="hidden" name="csrf_token" value="{csrf_token(request)}">'
         f'<select aria-label="미룰 첫 회차" name="name">{options}</select>'
         f'<select aria-label="미룰 주 수" name="weeks">{weeks}</select>'
-        '<button type="submit">이 회차부터 미루기</button></form>'
+        '<button type="submit" class="primary">이 회차부터 미루기</button></form>'
     )
 
 
-def _schedule_rows(request, data: dict) -> str:
+def _schedule_rows(request, data: dict) -> tuple[str, str]:
+    """(표 행, 편집 모달)을 돌려준다.
+
+    모달은 표 밖에 둔다. 표 칸 안에 두면 좁은 칸 폭과 가로 스크롤 설정을 물려받는다.
+    """
     items = []
-    for row in data["items"]:
+    dialogs = []
+    for index, row in enumerate(data["items"]):
         if row["rest_weeks"]:
             items.append(_rest_row(row["rest_weeks"]))
         if row["resting"]:
@@ -231,24 +253,30 @@ def _schedule_rows(request, data: dict) -> str:
             status = '<span class="pill">마감</span>'
         else:
             status = '<span class="pill pending">예정</span>'
-        link = f'/schedule/announcement?{urlencode({"name": row["name"]})}'
+        edit = ""
+        # 마감이 지난 회차는 고칠 게 없어 버튼을 두지 않는다.
+        if row["editable"]:
+            dialog_id = f"edit-{index}"
+            dialogs.append(_edit_dialog(request, row, dialog_id))
+            edit = f'<button type="button" data-dialog="{dialog_id}">편집</button>'
         items.append(
             "<tr>"
             f"<td>{escape(row['name'])}</td>"
             f"<td>{row['due'].strftime('%Y-%m-%d %H:%M')} ({'월화수목금토일'[row['due'].weekday()]})</td>"
             f"<td>{status}</td>"
             f"<td>{row['submitters']}명{separate_submission_count(row['separate_submissions'])}</td>"
-            f"<td>{row['announcement_state']} <a href=\"{link}\">문구</a></td>"
-            f"<td>{_manage_cell(request, row)}</td>"
+            f"<td>{row['announcement_state']}</td>"
+            f"<td>{edit}</td>"
             "</tr>"
         )
-    return rows(items, 6, "표시할 회차가 없습니다.")
+    return rows(items, 6, "표시할 회차가 없습니다."), "".join(dialogs)
 
 
 @require_admin
 async def handle(request: web.Request) -> web.Response:
     show_all = request.query.get("all") == "1"
     data = await asyncio.to_thread(_collect, show_all)
+    table_rows, edit_dialogs = _schedule_rows(request, data)
 
     warning = ""
     if data["upcoming"] == 0:
@@ -256,7 +284,7 @@ async def handle(request: web.Request) -> web.Response:
             '<div class="warn"><b>남은 회차가 없습니다.</b> '
             f'마지막 회차는 {escape(data["last_name"])}'
             f'({data["last_due"].strftime("%Y-%m-%d")})였습니다. '
-            "아래에서 다음 회차를 추가해야 새 회차로 넘어갑니다.</div>"
+            "`회차 추가` 버튼으로 다음 회차를 추가해야 새 회차로 넘어갑니다.</div>"
         )
     elif data["upcoming"] <= LOW_REMAINING:
         warning = (
@@ -326,34 +354,57 @@ async def handle(request: web.Request) -> web.Response:
 </section>
 {warning}
 {notice}
-<h2>회차 미루기</h2>
+<div class="toolbar">
+<button type="button" class="primary" data-dialog="postpone-dialog">회차 미루기</button>
+<button type="button" data-dialog="add-dialog">회차 추가</button>
+<button type="button" data-dialog="template-dialog">공지 기본 문구</button>
+</div>
+<dialog id="postpone-dialog" aria-labelledby="postpone-title">
+<div class="dialog-head"><h2 id="postpone-title">회차 미루기</h2><form method="dialog"><button aria-label="닫기">✕</button></form></div>
 <small>고른 회차부터 마지막 회차까지 N주씩 한꺼번에 밉니다. 회차 이름과 순서는 그대로이고, 아직 나가지 않은 공지도 같이 밀립니다.
-비는 주에는 `추가 회차`가 `쉬어가는 주`로 생깁니다. 그 주에도 회고를 받으려면 표의 `관리`에서 `회차로 쓰기`를, 되돌리려면 `삭제하기`를 누르세요.
+비는 주에는 `추가 회차`가 `쉬어가는 주`로 생깁니다. 그 주에도 회고를 받으려면 그 회차 `편집`에서 `회차로 쓰기`를, 되돌리려면 `삭제하기`를 누르세요.
 한 번에 최대 {MAX_POSTPONE_WEEKS}주까지 미룰 수 있습니다.</small>
 {_postpone_form(request, data)}
-<h2>회차 목록</h2>
-<div class="filters"><small>{escape(data['current_cohort'])} 일정</small>{toggle}</div>
-<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>관리</th></tr></thead>
-<tbody>{_schedule_rows(request, data)}</tbody></table></div>
-<small>`관리`를 누르면 그 회차를 고칠 수 있습니다. 마감이 지난 회차는 그 구간에 제출된 회고가 다른 회차로 집계되지 않도록 고칠 수 없고,
-이름과 쉬어가기는 아직 제출도 공지도 없는 예정 회차만 바꿀 수 있습니다.
-`쉬어가는 주`는 회차 판정과 공지에서 빠져 그 주에는 마감이 없습니다. `회차로 쓰기`를 누르면 돌아오고, `삭제하기`를 누르면 뒤 회차가 한 주씩 당겨집니다.</small>
-<details class="section"><summary>회차 추가</summary>
+</dialog>
+<dialog id="add-dialog" aria-labelledby="add-title">
+<div class="dialog-head"><h2 id="add-title">회차 추가</h2><form method="dialog"><button aria-label="닫기">✕</button></form></div>
 <small>마지막 회차({escape(data['last_name'])}, {data['last_due'].strftime('%Y-%m-%d %H:%M')}) 뒤에만 붙일 수 있습니다.</small>
 <form method="post" action="/schedule/add" class="filters">
 <input type="hidden" name="csrf_token" value="{csrf_token(request)}">
 <input aria-label="새 회차 이름" type="text" name="name" placeholder="7기 1회차" required>
 <input aria-label="마감 시각 (KST)" type="datetime-local" name="due_at" required>
-<button type="submit">추가</button></form>
-</details>
-<details class="section"><summary>제출 공지 기본 문구</summary>
+<button type="submit" class="primary">추가</button></form>
+</dialog>
+<dialog id="template-dialog" aria-labelledby="template-title">
+<div class="dialog-head"><h2 id="template-title">제출 공지 기본 문구</h2><form method="dialog"><button aria-label="닫기">✕</button></form></div>
 <small>공지 시각이 되면 이 문구가 회차마다 나갑니다. {PLACEHOLDER_HELP}
-특정 회차만 다르게 쓰려면 위 표의 `문구`에서 그 회차만 덮어씁니다.</small>
+특정 회차만 다르게 쓰려면 그 회차 `편집`의 `문구·공지 시각 편집`에서 덮어씁니다.</small>
 <form method="post" action="/schedule/announcement/template">
 <input type="hidden" name="csrf_token" value="{csrf_token(request)}">
 <textarea aria-label="공지 문구" name="body" rows="8" maxlength="{MAX_ANNOUNCEMENT_LENGTH}" required>{escape(data['template'])}</textarea>
-<div class="filters"><button type="submit">기본 문구 저장</button></div></form>
-</details>
+<div class="filters"><button type="submit" class="primary">기본 문구 저장</button></div></form>
+</dialog>
+<h2>회차 목록</h2>
+<div class="filters"><small>{escape(data['current_cohort'])} 일정</small>{toggle}</div>
+<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th></th></tr></thead>
+<tbody>{table_rows}</tbody></table></div>
+{edit_dialogs}
+<small>`편집`을 누르면 그 회차의 마감·이름·쉬어가기·공지를 고칠 수 있습니다. 마감이 지난 회차는 그 구간에 제출된 회고가 다른 회차로 집계되지 않도록 고칠 수 없습니다.
+`쉬어가는 주`는 회차 판정과 공지에서 빠져 그 주에는 마감이 없습니다.</small>
+<script>
+(() => {{
+ // 버튼이 가리키는 모달을 연다. 편집 버튼은 표 뒤에 그려지므로 버튼마다 걸지 않고
+ // 문서에서 한 번에 받는다. 바깥 어두운 곳을 누르면 닫는다.
+ document.addEventListener('click', (event) => {{
+  const opener = event.target.closest('[data-dialog]');
+  if (opener) {{
+   document.getElementById(opener.dataset.dialog).showModal();
+   return;
+  }}
+  if (event.target.tagName === 'DIALOG') event.target.close();
+ }});
+}})();
+</script>
 """
     return web.Response(
         text=layout.render(
