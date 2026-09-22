@@ -18,9 +18,11 @@ from database.sessions import (
     MAX_POSTPONE_WEEKS,
     ScheduleError,
     add_session,
+    delete_session,
     get_template,
     list_sessions,
     postpone_from,
+    rename_session,
     update_due_at,
 )
 from utils import format_remaining_time, get_current_session_info, tz_now
@@ -87,6 +89,13 @@ def _collect(show_all: bool) -> dict:
                 # 마감이 지난 회차의 마감 시각을 옮기면 그 구간에 제출된 회고가
                 # 다른 회차에 속한 것처럼 집계되므로 예정 회차만 고칠 수 있다.
                 "editable": due > now,
+                # 기록이 하나라도 붙으면 회차 이름을 바꿀 수 없다. 여기서는
+                # 제출 건수만 보고, 출석 같은 다른 기록은 저장할 때 걸러진다.
+                "changeable": (
+                    due > now
+                    and row["announced_at"] is None
+                    and row["submissions"] == 0
+                ),
                 "announcement_state": state(row, now)[0],
                 "rest_weeks": rest_weeks,
             }
@@ -120,9 +129,29 @@ def _due_form(request, row: dict) -> str:
     )
 
 
+def _name_form(request, row: dict) -> str:
+    """아직 기록이 붙지 않은 예정 회차만 이름을 바꾸거나 지울 수 있다."""
+    if not row["changeable"]:
+        return ""
+    token = csrf_token(request)
+    name = escape(row["name"])
+    return (
+        '<form method="post" class="inline" action="/schedule/rename">'
+        f'<input type="hidden" name="csrf_token" value="{token}">'
+        f'<input type="hidden" name="name" value="{name}">'
+        f'<input aria-label="새 회차 이름" type="text" name="new_name" value="{name}" required>'
+        '<button type="submit">이름 변경</button></form>'
+        '<form method="post" class="inline" action="/schedule/delete"'
+        f' onsubmit="return confirm(\'{name} 회차를 지울까요?\')">'
+        f'<input type="hidden" name="csrf_token" value="{token}">'
+        f'<input type="hidden" name="name" value="{name}">'
+        '<button type="submit">삭제</button></form>'
+    )
+
+
 def _rest_row(weeks: int) -> str:
     return (
-        '<tr class="rest"><td colspan="6">'
+        '<tr class="rest"><td colspan="7">'
         f'쉬어가는 주 · {weeks}주 · 회고 없음'
         "</td></tr>"
     )
@@ -170,9 +199,10 @@ def _schedule_rows(request, data: dict) -> str:
             f"<td>{row['submitters']}명{separate_submission_count(row['separate_submissions'])}</td>"
             f"<td>{row['announcement_state']} <a href=\"{link}\">문구</a></td>"
             f"<td>{_due_form(request, row)}</td>"
+            f"<td>{_name_form(request, row)}</td>"
             "</tr>"
         )
-    return rows(items, 6, "표시할 회차가 없습니다.")
+    return rows(items, 7, "표시할 회차가 없습니다.")
 
 
 @require_admin
@@ -206,11 +236,25 @@ async def handle(request: web.Request) -> web.Response:
             if request.query.get("announced")
             else ""
         )
+        filled = request.query.get("filled", "")
+        made = (
+            f" 비는 주는 `{escape(filled)}`(으)로 세워 뒀습니다. "
+            "공지는 꺼져 있으니, 쉬어갈 주면 지우고 쓸 주면 이름과 공지를 정하세요."
+            if filled
+            else ""
+        )
         notice = (
             f'<div class="warn">`{escape(request.query["postponed"])}`부터 '
             f'{escape(moved)}개 회차를 {escape(request.query.get("weeks", ""))}주씩 '
-            f"미뤘습니다.{stale}</div>"
+            f"미뤘습니다.{made}{stale}</div>"
         )
+    elif request.query.get("renamed"):
+        notice = (
+            f'<div class="warn">`{escape(request.query["renamed"])}` 회차 이름을 '
+            f'`{escape(request.query.get("to", ""))}`(으)로 바꿨습니다.</div>'
+        )
+    elif request.query.get("deleted"):
+        notice = f'<div class="warn">`{escape(request.query["deleted"])}` 회차를 지웠습니다.</div>'
     elif request.query.get("template"):
         notice = '<div class="warn">제출 공지 기본 문구를 저장했습니다.</div>'
     elif request.query.get("error"):
@@ -228,14 +272,17 @@ async def handle(request: web.Request) -> web.Response:
 </section>
 {warning}
 <div class="filters"><small>{escape(data['current_cohort'])} 일정</small>{toggle}</div>
-<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>마감 변경</th></tr></thead>
+<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>마감 변경</th><th>이름·삭제</th></tr></thead>
 <tbody>{_schedule_rows(request, data)}</tbody></table></div>
 <small>마감이 지난 회차는 바꿀 수 없습니다. 그 구간에 제출된 회고가 다른 회차에 속한 것처럼 집계되기 때문입니다.
-회차 이름은 회고에 그대로 기록되는 값이라 만든 뒤에는 바꿀 수 없습니다.</small>
+회차 이름은 회고에 그대로 기록되는 값이라, 아직 제출도 공지도 없는 예정 회차만 이름을 바꾸거나 지울 수 있습니다.</small>
 <h2>연휴로 회차 미루기</h2>
 <small>추석·설처럼 한 주 쉬어갈 때 씁니다. 고른 회차부터 마지막 회차까지 한꺼번에 밀리므로
 회차 이름과 순서, 회차 사이 간격은 그대로고 기수만 그만큼 늦게 끝납니다.
-아직 나가지 않은 제출 공지도 같은 간격으로 따라 밀리고, 비는 주는 위 표에 `쉬어가는 주`로 보입니다.
+밀고 나서 비는 주에는 `추가 회차`가 공지가 꺼진 채로 세워집니다. 정말 쉬어갈 주면 위 표에서 지우고,
+보충 회차로 쓸 거면 이름을 바꾸고 공지를 켜세요.
+아직 나가지 않은 제출 공지도 같은 간격으로 따라 밀립니다. 세워진 `추가 회차`를 지우면 그 주는
+위 표에 `쉬어가는 주`로 보입니다.
 한 번에 최대 {MAX_POSTPONE_WEEKS}주까지 미룰 수 있습니다.</small>
 {_postpone_form(request, data)}
 <h2>회차 추가</h2>
@@ -318,9 +365,36 @@ async def handle_postpone(request: web.Request) -> web.StreamResponse:
         len(moved["names"]),
     )
     extra = {"announced": "1"} if moved["announced"] else {}
+    if moved["filled"]:
+        extra["filled"] = ", ".join(moved["filled"])
     raise _redirect(
         postponed=name, weeks=weeks, moved=len(moved["names"]), **extra
     )
+
+
+@require_admin
+async def handle_rename(request: web.Request) -> web.StreamResponse:
+    form = await request.post()
+    name = str(form.get("name", "")).strip()
+    new_name = str(form.get("new_name", "")).strip()
+    try:
+        saved = await asyncio.to_thread(rename_session, name, new_name, now=tz_now())
+    except ScheduleError as error:
+        raise _redirect(error=str(error))
+    logger.info("관리자 웹에서 회차 이름을 바꿉니다 - name={} new_name={}", name, saved)
+    raise _redirect(renamed=name, to=saved)
+
+
+@require_admin
+async def handle_delete(request: web.Request) -> web.StreamResponse:
+    form = await request.post()
+    name = str(form.get("name", "")).strip()
+    try:
+        await asyncio.to_thread(delete_session, name, now=tz_now())
+    except ScheduleError as error:
+        raise _redirect(error=str(error))
+    logger.info("관리자 웹에서 회차를 지웁니다 - name={}", name)
+    raise _redirect(deleted=name)
 
 
 @require_admin

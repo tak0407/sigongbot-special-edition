@@ -189,8 +189,13 @@ def postpone_from(name: str, weeks: int, *, now: datetime.datetime) -> dict:
     쉬어가는 주만 일정에서 비워진다. 회차 이름은 회고 행에 박히는 조인 키라
     건드리지 않는다.
 
-    돌려주는 값의 `announced`는 이미 공지가 나간 회차다. 그 공지 본문에는
-    옛 마감이 적혀 있어 관리자가 따로 알려야 한다.
+    밀고 나면 원래 자리가 비므로 그 자리에 `추가 회차`를 세워 둔다. 표에서
+    빈자리가 이유 없이 비어 보이지 않게 하려는 것이고, 정말 쉬어갈 주라면
+    관리자가 지우면 된다. 공지는 꺼진 채로 만든다.
+
+    돌려주는 값의 `announced`는 이미 공지가 나간 회차이고 `filled`는 새로 세운
+    회차다. 공지가 나간 회차의 본문에는 옛 마감이 적혀 있어 관리자가 따로
+    알려야 한다.
     """
     if weeks < 1 or weeks > MAX_POSTPONE_WEEKS:
         raise ScheduleError(
@@ -240,8 +245,125 @@ def postpone_from(name: str, weeks: int, *, now: datetime.datetime) -> dict:
                     target["name"],
                 ),
             )
+        # 미룬 만큼 비는 주를 `추가 회차`로 채운다. 빈자리를 표에서 이유 없이
+        # 비워 두는 대신 회차로 세워 두고, 관리자가 이름을 바꾸거나 지운다.
+        filled = []
+        for step in range(weeks):
+            due = from_due + datetime.timedelta(weeks=step)
+            new_name = _filler_name(connection, name)
+            # 공지 시각은 비워 둔다. 자동으로 만든 회차가 관리자도 모르는 새
+            # 채널에 공지로 나가면 안 된다. 쓸 회차면 공지 화면에서 켠다.
+            connection.execute(
+                "INSERT INTO sessions (name, due_at, announce_at) VALUES (?, ?, NULL)",
+                (new_name, due.isoformat()),
+            )
+            filled.append(new_name)
     invalidate()
-    return {"names": [target["name"] for target in targets], "announced": announced}
+    return {
+        "names": [target["name"] for target in targets],
+        "announced": announced,
+        "filled": filled,
+    }
+
+
+FILLER_SUFFIX = "추가 회차"
+
+
+def _filler_name(connection, after: str) -> str:
+    """비는 주를 채울 회차 이름을 겹치지 않게 짓는다."""
+    from utils import cohort_of
+
+    taken = {row["name"] for row in connection.execute("SELECT name FROM sessions")}
+    base = f"{cohort_of(after)} {FILLER_SUFFIX}"
+    if base not in taken:
+        return base
+    for number in range(2, 100):
+        candidate = f"{base} {number}"
+        if candidate not in taken:
+            return candidate
+    raise ScheduleError("추가 회차 이름을 지을 자리가 없습니다.")
+
+
+def _references(connection, name: str) -> str:
+    """회차 이름을 값으로 참조하는 행을 표별로 센다.
+
+    회차 이름은 회고·출석·진행 중 회고처럼 여러 표에 그대로 박히는 조인 키다.
+    표가 늘어날 때마다 목록을 고쳐야 하는 일이 없도록, `session_name` 칸을
+    가진 표를 직접 찾아 센다. 표 이름은 sqlite_master에서 온 값이라 질의에
+    끼워 넣어도 외부 입력이 섞이지 않는다.
+    """
+    found = []
+    tables = [
+        row["name"]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name <> 'sessions'"
+        )
+    ]
+    for table in tables:
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if "session_name" not in columns:
+            continue
+        number = connection.execute(
+            f"SELECT COUNT(*) AS number FROM {table} WHERE session_name = ?", (name,)
+        ).fetchone()["number"]
+        if number:
+            found.append(f"{table} {number}건")
+    return ", ".join(found)
+
+
+def _changeable(connection, name: str, now: datetime.datetime) -> None:
+    """이름을 바꾸거나 지울 수 있는 회차인지 확인한다.
+
+    회차 이름은 회고 행에 박히는 값이라, 기록이 하나라도 붙은 뒤에 바꾸면 그
+    기록이 어느 회차 것인지 알 수 없게 된다. 아직 아무것도 붙지 않은 예정
+    회차만 손댈 수 있다.
+    """
+    row = connection.execute(
+        "SELECT due_at, announced_at FROM sessions WHERE name = ?", (name,)
+    ).fetchone()
+    if row is None:
+        raise ScheduleError(f"`{name}` 회차를 찾을 수 없습니다.")
+    if datetime.datetime.fromisoformat(row["due_at"]) <= now:
+        raise ScheduleError(f"이미 마감된 `{name}`은(는) 바꿀 수 없습니다.")
+    if row["announced_at"] is not None:
+        raise ScheduleError(f"`{name}`은(는) 제출 공지가 이미 나가서 바꿀 수 없습니다.")
+    used = _references(connection, name)
+    if used:
+        raise ScheduleError(f"`{name}`에 이미 쌓인 기록({used})이 있어 바꿀 수 없습니다.")
+
+
+def rename_session(name: str, new_name: str, *, now: datetime.datetime) -> str:
+    """아직 아무 기록도 붙지 않은 예정 회차의 이름을 바꾼다."""
+    new_name = _validate_name(new_name)
+    with get_connection() as connection:
+        _changeable(connection, name, now)
+        if new_name != name:
+            taken = connection.execute(
+                "SELECT 1 FROM sessions WHERE name = ?", (new_name,)
+            ).fetchone()
+            if taken:
+                raise ScheduleError(f"`{new_name}`은(는) 이미 있는 회차입니다.")
+        connection.execute(
+            "UPDATE sessions SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+            (new_name, name),
+        )
+    invalidate()
+    return new_name
+
+
+def delete_session(name: str, *, now: datetime.datetime) -> None:
+    """아직 아무 기록도 붙지 않은 예정 회차를 지운다."""
+    with get_connection() as connection:
+        _changeable(connection, name, now)
+        remaining = connection.execute(
+            "SELECT COUNT(*) AS number FROM sessions"
+        ).fetchone()["number"]
+        # 표가 비면 일정 정본이 코드 상수로 되돌아간다. 관리자가 만든 일정이
+        # 조용히 사라지는 셈이라, 마지막 한 줄은 남긴다.
+        if remaining <= 1:
+            raise ScheduleError("마지막 남은 회차는 지울 수 없습니다.")
+        connection.execute("DELETE FROM sessions WHERE name = ?", (name,))
+    invalidate()
 
 # --- 매회차 제출 공지 -------------------------------------------------------
 #

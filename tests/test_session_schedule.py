@@ -227,8 +227,8 @@ class ScheduleEditTest(ScheduleTestCase):
         self.assertNotIn("/schedule/due", row)
 
 
-class PostponeTest(ScheduleTestCase):
-    """연휴로 한 주 쉬어갈 때 고른 회차부터 뒤쪽을 통째로 미룬다."""
+class WeeklyScheduleTestCase(ScheduleTestCase):
+    """한 주 간격 일정을 깔아 두고 쓰는 화면 시험의 공용 준비."""
 
     FIRST = datetime.datetime(2099, 3, 3, 5, 0, tzinfo=KST)
     WEEK = datetime.timedelta(days=7)
@@ -249,6 +249,10 @@ class PostponeTest(ScheduleTestCase):
         names, dues = sessions.load_schedule()
         return dues[names.index(name)]
 
+
+class PostponeTest(WeeklyScheduleTestCase):
+    """연휴로 한 주 쉬어갈 때 고른 회차부터 뒤쪽을 통째로 미룬다."""
+
     async def test_moves_the_chosen_session_and_every_later_one(self):
         self._weekly()
         response = await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
@@ -259,15 +263,30 @@ class PostponeTest(ScheduleTestCase):
         for index, name in enumerate(["9기 2회차", "9기 3회차", "9기 4회차"], start=1):
             self.assertEqual(self._due(name), self.FIRST + self.WEEK * (index + 1))
 
-    async def test_keeps_the_order_and_leaves_one_week_empty(self):
-        """회차 사이 간격은 그대로고 쉬어가는 주만 비어야 한다."""
+    async def test_keeps_the_order_and_fills_the_emptied_weeks(self):
+        """미룬 회차는 뒤로 가고, 비는 주는 추가 회차가 자리를 지킨다."""
         self._weekly()
         await self._post("/schedule/postpone", name="9기 3회차", weeks="2")
 
-        _, dues = sessions.load_schedule()
+        names, dues = sessions.load_schedule()
         self.assertEqual(dues, sorted(dues))
         gaps = [(late - early).days for early, late in zip(dues, dues[1:])]
-        self.assertEqual(gaps, [7, 21, 7])
+        self.assertEqual(gaps, [7, 7, 7, 7, 7])
+        # 미룬 회차는 두 주 뒤로 가고 원래 자리는 추가 회차가 채운다.
+        self.assertEqual(self._due("9기 3회차"), self.FIRST + self.WEEK * 4)
+        self.assertEqual(names[2:4], ["9기 추가 회차", "9기 추가 회차 2"])
+
+    async def test_the_extra_session_starts_with_its_announcement_off(self):
+        """관리자도 모르는 새 자동 생성된 회차가 채널에 공지되면 안 된다."""
+        self._weekly()
+        response = await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        self.assertEqual(self._query(response)["filled"], ["9기 추가 회차"])
+
+        extra = sessions.get_session("9기 추가 회차")
+        self.assertEqual(extra["due_at"], self.FIRST + self.WEEK)
+        self.assertIsNone(extra["announce_at"])
+        self.assertIsNone(extra["announced_at"])
+        self.assertEqual(sessions.pending_announcements(self.FIRST), [])
 
     async def test_unsent_announcements_follow_the_deadline(self):
         """공지 시각이 마감 뒤로 넘어가면 그 회차 공지가 조용히 빠진다."""
@@ -326,12 +345,14 @@ class PostponeTest(ScheduleTestCase):
         self.assertEqual(response.status, 403)
         self.assertEqual(self._due("9기 2회차"), self.FIRST + self.WEEK)
 
-    async def test_page_marks_the_rest_week_between_sessions(self):
+    async def test_page_marks_the_rest_week_left_by_deleting_the_extra_session(self):
+        """추가 회차를 지워 정말 쉬어가기로 하면 그 주가 표에 드러나야 한다."""
         self._weekly()
         await self._post("/schedule/postpone", name="9기 3회차", weeks="1")
+        await self._post("/schedule/delete", name="9기 추가 회차")
         response = await self.client.get("/schedule?all=1", headers=self._headers())
         body = await response.text()
-        rest = '<tr class="rest"><td colspan="6">쉬어가는 주 · 1주 · 회고 없음</td></tr>'
+        rest = '<tr class="rest"><td colspan="7">쉬어가는 주 · 1주 · 회고 없음</td></tr>'
         self.assertIn(rest, body)
         # 쉬어가는 주는 미뤄진 회차 바로 앞에 놓인다.
         self.assertLess(body.index(rest), body.index("<td>9기 3회차</td>"))
@@ -347,6 +368,110 @@ class PostponeTest(ScheduleTestCase):
         )
         response = await self.client.get("/schedule?all=1", headers=self._headers())
         self.assertNotIn('<tr class="rest">', await response.text())
+
+
+class RenameAndDeleteTest(WeeklyScheduleTestCase):
+    """자동으로 세운 추가 회차는 이름을 바꾸거나 지울 수 있어야 한다."""
+
+    def _submit(self, session_name: str) -> None:
+        with get_connection() as connection:
+            connection.execute(
+                "INSERT INTO retrospectives (user_id, session_name, slack_channel,"
+                " slack_ts, good_points, improvements, learnings, action_item)"
+                " VALUES ('U1', ?, 'C1', '1.0', '좋았다', '고칠 점', '배운 점', '할 일')",
+                (session_name,),
+            )
+
+    async def test_renames_a_session_that_has_no_records_yet(self):
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+
+        response = await self._post(
+            "/schedule/rename", name="9기 추가 회차", new_name="9기 보충 회차"
+        )
+        self.assertEqual(self._query(response)["renamed"], ["9기 추가 회차"])
+        self.assertEqual(self._query(response)["to"], ["9기 보충 회차"])
+
+        names, _ = sessions.load_schedule()
+        self.assertIn("9기 보충 회차", names)
+        self.assertNotIn("9기 추가 회차", names)
+
+    async def test_refuses_to_rename_a_session_with_submissions(self):
+        """이름은 회고 행에 박히는 값이라, 기록이 붙은 뒤엔 바꿀 수 없다."""
+        self._weekly()
+        self._submit("9기 2회차")
+        response = await self._post(
+            "/schedule/rename", name="9기 2회차", new_name="9기 다른 이름"
+        )
+        self.assertIn("쌓인 기록", self._query(response)["error"][0])
+        self.assertIn("9기 2회차", sessions.load_schedule()[0])
+
+    async def test_refuses_to_rename_an_announced_session(self):
+        self._weekly()
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE sessions SET announced_at = ? WHERE name = '9기 2회차'",
+                (self.FIRST.isoformat(),),
+            )
+        sessions.invalidate()
+        response = await self._post(
+            "/schedule/rename", name="9기 2회차", new_name="9기 다른 이름"
+        )
+        self.assertIn("제출 공지가 이미 나가서", self._query(response)["error"][0])
+
+    async def test_refuses_to_rename_a_closed_session(self):
+        self._weekly(closed=True)
+        response = await self._post(
+            "/schedule/rename", name="9기 0회차", new_name="9기 지난 회차"
+        )
+        self.assertIn("이미 마감된", self._query(response)["error"][0])
+
+    async def test_refuses_a_name_another_session_already_uses(self):
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        response = await self._post(
+            "/schedule/rename", name="9기 추가 회차", new_name="9기 4회차"
+        )
+        self.assertIn("이미 있는 회차", self._query(response)["error"][0])
+
+    async def test_deletes_a_session_that_has_no_records_yet(self):
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+
+        response = await self._post("/schedule/delete", name="9기 추가 회차")
+        self.assertEqual(self._query(response)["deleted"], ["9기 추가 회차"])
+
+        names, dues = sessions.load_schedule()
+        self.assertNotIn("9기 추가 회차", names)
+        # 지우고 나면 그 주는 다시 비고, 남은 회차 마감은 그대로다.
+        self.assertEqual(dues, sorted(dues))
+        self.assertEqual(self._due("9기 2회차"), self.FIRST + self.WEEK * 2)
+
+    async def test_refuses_to_delete_a_session_with_submissions(self):
+        self._weekly()
+        self._submit("9기 2회차")
+        response = await self._post("/schedule/delete", name="9기 2회차")
+        self.assertIn("쌓인 기록", self._query(response)["error"][0])
+        self.assertIn("9기 2회차", sessions.load_schedule()[0])
+
+    async def test_keeps_the_last_session_so_the_schedule_survives(self):
+        """일정 표가 비면 정본이 조용히 코드 상수로 돌아간다."""
+        future = self.FIRST
+        self._replace_schedule([("9기 1회차", future, None, None)])
+        response = await self._post("/schedule/delete", name="9기 1회차")
+        self.assertIn("마지막 남은 회차", self._query(response)["error"][0])
+        self.assertEqual(sessions.load_schedule()[0], ["9기 1회차"])
+
+    async def test_page_only_offers_the_forms_for_changeable_sessions(self):
+        self._weekly(closed=True)
+        self._submit("9기 2회차")
+        body = await (await self.client.get("/schedule?all=1", headers=self._headers())).text()
+        self.assertIn('action="/schedule/rename"', body)
+        # 마감된 회차와 제출이 있는 회차에는 폼이 붙지 않는다.
+        for name in ("9기 0회차", "9기 2회차"):
+            row = body.split(f"<td>{name}</td>", 1)[1].split("</tr>", 1)[0]
+            self.assertNotIn("/schedule/rename", row)
+            self.assertNotIn("/schedule/delete", row)
 
 
 class AnnouncementTestCase(ScheduleTestCase):
