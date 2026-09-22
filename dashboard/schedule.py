@@ -18,11 +18,11 @@ from database.sessions import (
     MAX_POSTPONE_WEEKS,
     ScheduleError,
     add_session,
-    delete_session,
     get_template,
     list_sessions,
     postpone_from,
     rename_session,
+    set_resting,
     update_due_at,
 )
 from utils import format_remaining_time, get_current_session_info, tz_now
@@ -59,8 +59,11 @@ def _collect(show_all: bool) -> dict:
     now = tz_now()
 
     schedule = list_sessions()
-    names = [row["name"] for row in schedule]
-    dues = [row["due_at"] for row in schedule]
+    # 쉬어가는 주는 회차가 아니다. 남은 회차 수나 마지막 마감처럼 "언제까지
+    # 일정이 차 있나"를 보는 값에서는 빼고 센다. 표에는 그대로 보여 준다.
+    working = [row for row in schedule if not row["resting"]] or schedule
+    names = [row["name"] for row in working]
+    dues = [row["due_at"] for row in working]
 
     current_cohort = _cohort(current_name) if current_name else _cohort(names[-1])
     items = []
@@ -73,7 +76,7 @@ def _collect(show_all: bool) -> dict:
         # 간격은 전체 일정에서 나온다.
         rest_weeks = _rest_weeks(previous, row)
         previous = row
-        if due > now:
+        if due > now and not row["resting"]:
             upcoming += 1
             movable.append(row)
         if not show_all and _cohort(name) != current_cohort:
@@ -130,7 +133,7 @@ def _due_form(request, row: dict) -> str:
 
 
 def _name_form(request, row: dict) -> str:
-    """아직 기록이 붙지 않은 예정 회차만 이름을 바꾸거나 지울 수 있다."""
+    """아직 기록이 붙지 않은 예정 회차만 이름을 바꾸거나 쉬어갈 수 있다."""
     if not row["changeable"]:
         return ""
     token = csrf_token(request)
@@ -141,11 +144,12 @@ def _name_form(request, row: dict) -> str:
         f'<input type="hidden" name="name" value="{name}">'
         f'<input aria-label="새 회차 이름" type="text" name="new_name" value="{name}" required>'
         '<button type="submit">이름 변경</button></form>'
-        '<form method="post" class="inline" action="/schedule/delete"'
-        f' onsubmit="return confirm(\'{name} 회차를 지울까요?\')">'
+        '<form method="post" class="inline" action="/schedule/rest">'
         f'<input type="hidden" name="csrf_token" value="{token}">'
         f'<input type="hidden" name="name" value="{name}">'
-        '<button type="submit">삭제</button></form>'
+        f'<input type="hidden" name="resting" value="{0 if row["resting"] else 1}">'
+        f'<button type="submit">{"회차로 쓰기" if row["resting"] else "쉬어가기"}</button>'
+        "</form>"
     )
 
 
@@ -184,7 +188,9 @@ def _schedule_rows(request, data: dict) -> str:
     for row in data["items"]:
         if row["rest_weeks"]:
             items.append(_rest_row(row["rest_weeks"]))
-        if row["current"]:
+        if row["resting"]:
+            status = '<span class="pill">쉬어가는 주</span>'
+        elif row["current"]:
             status = '<span class="pill now">진행 중</span>'
         elif row["past"]:
             status = '<span class="pill">마감</span>'
@@ -253,8 +259,16 @@ async def handle(request: web.Request) -> web.Response:
             f'<div class="warn">`{escape(request.query["renamed"])}` 회차 이름을 '
             f'`{escape(request.query.get("to", ""))}`(으)로 바꿨습니다.</div>'
         )
-    elif request.query.get("deleted"):
-        notice = f'<div class="warn">`{escape(request.query["deleted"])}` 회차를 지웠습니다.</div>'
+    elif request.query.get("resting"):
+        notice = (
+            f'<div class="warn">`{escape(request.query["resting"])}` 주는 쉬어갑니다. '
+            "그 주에는 마감도 공지도 없습니다.</div>"
+        )
+    elif request.query.get("working"):
+        notice = (
+            f'<div class="warn">`{escape(request.query["working"])}`을(를) 회차로 씁니다. '
+            "공지를 보내려면 그 회차의 `문구`에서 공지 시각을 정하세요.</div>"
+        )
     elif request.query.get("template"):
         notice = '<div class="warn">제출 공지 기본 문구를 저장했습니다.</div>'
     elif request.query.get("error"):
@@ -275,14 +289,14 @@ async def handle(request: web.Request) -> web.Response:
 <p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>마감 변경</th><th>이름·삭제</th></tr></thead>
 <tbody>{_schedule_rows(request, data)}</tbody></table></div>
 <small>마감이 지난 회차는 바꿀 수 없습니다. 그 구간에 제출된 회고가 다른 회차에 속한 것처럼 집계되기 때문입니다.
-회차 이름은 회고에 그대로 기록되는 값이라, 아직 제출도 공지도 없는 예정 회차만 이름을 바꾸거나 지울 수 있습니다.</small>
+회차 이름은 회고에 그대로 기록되는 값이라, 아직 제출도 공지도 없는 예정 회차만 이름을 바꾸거나 쉬어갈 수 있습니다.
+`쉬어가는 주`로 둔 회차는 회차 판정과 공지에서 빠져 그 주에는 마감이 없고, 다시 `회차로 쓰기`를 누르면 돌아옵니다.</small>
 <h2>연휴로 회차 미루기</h2>
 <small>추석·설처럼 한 주 쉬어갈 때 씁니다. 고른 회차부터 마지막 회차까지 한꺼번에 밀리므로
 회차 이름과 순서, 회차 사이 간격은 그대로고 기수만 그만큼 늦게 끝납니다.
-밀고 나서 비는 주에는 `추가 회차`가 공지가 꺼진 채로 세워집니다. 정말 쉬어갈 주면 위 표에서 지우고,
-보충 회차로 쓸 거면 이름을 바꾸고 공지를 켜세요.
-아직 나가지 않은 제출 공지도 같은 간격으로 따라 밀립니다. 세워진 `추가 회차`를 지우면 그 주는
-위 표에 `쉬어가는 주`로 보입니다.
+밀고 나서 비는 주에는 `추가 회차`가 `쉬어가는 주`로 세워집니다. 그대로 두면 그 주에는 마감이 없고,
+보충 회차로 쓸 거면 위 표에서 `회차로 쓰기`를 눌러 이름과 공지를 정하세요.
+아직 나가지 않은 제출 공지도 같은 간격으로 따라 밀립니다.
 한 번에 최대 {MAX_POSTPONE_WEEKS}주까지 미룰 수 있습니다.</small>
 {_postpone_form(request, data)}
 <h2>회차 추가</h2>
@@ -386,15 +400,16 @@ async def handle_rename(request: web.Request) -> web.StreamResponse:
 
 
 @require_admin
-async def handle_delete(request: web.Request) -> web.StreamResponse:
+async def handle_rest(request: web.Request) -> web.StreamResponse:
     form = await request.post()
     name = str(form.get("name", "")).strip()
+    resting = str(form.get("resting", "")) == "1"
     try:
-        await asyncio.to_thread(delete_session, name, now=tz_now())
+        await asyncio.to_thread(set_resting, name, resting, now=tz_now())
     except ScheduleError as error:
         raise _redirect(error=str(error))
-    logger.info("관리자 웹에서 회차를 지웁니다 - name={}", name)
-    raise _redirect(deleted=name)
+    logger.info("관리자 웹에서 쉬어가기를 바꿉니다 - name={} resting={}", name, resting)
+    raise _redirect(**({"resting": name} if resting else {"working": name}))
 
 
 @require_admin

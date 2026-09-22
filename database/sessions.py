@@ -28,7 +28,9 @@ class ScheduleError(Exception):
 def _read() -> tuple[list[str], list[datetime.datetime]]:
     with get_connection() as connection:
         found = connection.execute(
-            "SELECT name, due_at FROM sessions ORDER BY due_at, name"
+            # 쉬어가는 주로 표시된 회차는 회차 판정에서 빠진다. 그 주에는
+            # 마감이 없고, 그 사이 제출은 다음 회차로 간다.
+            "SELECT name, due_at FROM sessions WHERE resting = 0 ORDER BY due_at, name"
         ).fetchall()
     names = [row["name"] for row in found]
     dues = [datetime.datetime.fromisoformat(row["due_at"]) for row in found]
@@ -71,7 +73,8 @@ def list_sessions() -> list[dict]:
     with get_connection() as connection:
         found = connection.execute(
             """
-            SELECT s.name, s.due_at, s.announce_at, s.announcement, s.announced_at
+            SELECT s.name, s.due_at, s.announce_at, s.announcement, s.announced_at,
+                   s.resting
               FROM sessions s
              ORDER BY s.due_at, s.name
             """
@@ -251,10 +254,13 @@ def postpone_from(name: str, weeks: int, *, now: datetime.datetime) -> dict:
         for step in range(weeks):
             due = from_due + datetime.timedelta(weeks=step)
             new_name = _filler_name(connection, name)
-            # 공지 시각은 비워 둔다. 자동으로 만든 회차가 관리자도 모르는 새
-            # 채널에 공지로 나가면 안 된다. 쓸 회차면 공지 화면에서 켠다.
+            # 쉬어가는 주로 세운다. 연휴라 미룬 주이므로 그대로 두면 그 주는
+            # 회고 없이 지나가고, 보충 회차로 쓸 때만 관리자가 토글을 끈다.
+            # 공지 시각도 비워 둔다. 자동으로 만든 회차가 관리자도 모르는 새
+            # 채널에 공지로 나가면 안 된다.
             connection.execute(
-                "INSERT INTO sessions (name, due_at, announce_at) VALUES (?, ?, NULL)",
+                "INSERT INTO sessions (name, due_at, announce_at, resting)"
+                " VALUES (?, ?, NULL, 1)",
                 (new_name, due.isoformat()),
             )
             filled.append(new_name)
@@ -351,18 +357,26 @@ def rename_session(name: str, new_name: str, *, now: datetime.datetime) -> str:
     return new_name
 
 
-def delete_session(name: str, *, now: datetime.datetime) -> None:
-    """아직 아무 기록도 붙지 않은 예정 회차를 지운다."""
+def set_resting(name: str, resting: bool, *, now: datetime.datetime) -> None:
+    """그 주를 쉬어갈지 회차로 쓸지 켜고 끈다.
+
+    쉬어가는 주로 두면 회차 판정과 공지에서 빠져 그 주에는 마감이 없다. 회차를
+    지웠다 다시 만들지 않으므로 마음이 바뀌면 그대로 되돌릴 수 있다.
+    """
     with get_connection() as connection:
         _changeable(connection, name, now)
-        remaining = connection.execute(
-            "SELECT COUNT(*) AS number FROM sessions"
-        ).fetchone()["number"]
-        # 표가 비면 일정 정본이 코드 상수로 되돌아간다. 관리자가 만든 일정이
-        # 조용히 사라지는 셈이라, 마지막 한 줄은 남긴다.
-        if remaining <= 1:
-            raise ScheduleError("마지막 남은 회차는 지울 수 없습니다.")
-        connection.execute("DELETE FROM sessions WHERE name = ?", (name,))
+        if resting:
+            remaining = connection.execute(
+                "SELECT COUNT(*) AS number FROM sessions WHERE resting = 0"
+            ).fetchone()["number"]
+            # 남는 회차가 없으면 일정 정본이 조용히 코드 상수로 돌아간다.
+            if remaining <= 1:
+                raise ScheduleError("마지막 남은 회차는 쉬어갈 수 없습니다.")
+        connection.execute(
+            "UPDATE sessions SET resting = ?, updated_at = CURRENT_TIMESTAMP"
+            " WHERE name = ?",
+            (1 if resting else 0, name),
+        )
     invalidate()
 
 # --- 매회차 제출 공지 -------------------------------------------------------
@@ -387,6 +401,7 @@ def _session(row) -> dict:
         "announce_at": _time(row["announce_at"]),
         "announcement": row["announcement"],
         "announced_at": _time(row["announced_at"]),
+        "resting": bool(row["resting"]) if "resting" in row.keys() else False,
     }
 
 
@@ -452,7 +467,7 @@ def render_announcement(body: str, *, name: str, due_at: datetime.datetime) -> s
 def get_session(name: str) -> dict | None:
     with get_connection() as connection:
         row = connection.execute(
-            "SELECT name, due_at, announce_at, announcement, announced_at"
+            "SELECT name, due_at, announce_at, announcement, announced_at, resting"
             "  FROM sessions WHERE name = ?",
             (name,),
         ).fetchone()
@@ -514,9 +529,9 @@ def pending_announcements(now: datetime.datetime) -> list[dict]:
     """
     with get_connection() as connection:
         found = connection.execute(
-            "SELECT name, due_at, announce_at, announcement, announced_at"
+            "SELECT name, due_at, announce_at, announcement, announced_at, resting"
             "  FROM sessions"
-            " WHERE announce_at IS NOT NULL AND announced_at IS NULL"
+            " WHERE announce_at IS NOT NULL AND announced_at IS NULL AND resting = 0"
             " ORDER BY due_at, name"
         ).fetchall()
 

@@ -477,6 +477,21 @@ def _session_passes(connection: sqlite3.Connection) -> None:
     )
 
 
+def _sessions_resting(connection: sqlite3.Connection) -> None:
+    """쉬어가는 주 표시.
+
+    연휴로 회차를 미루면 비는 주에 `추가 회차`가 세워진다. 그 주를 정말 쉬어갈지
+    보충 회차로 쓸지는 관리자가 정하므로, 회차를 지웠다 다시 만드는 대신 한 칸으로
+    켜고 끈다. 켜진 회차는 회차 판정과 공지에서 빠진다.
+    """
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(sessions)")}
+    if "resting" in columns:
+        return
+    connection.execute(
+        "ALTER TABLE sessions ADD COLUMN resting INTEGER NOT NULL DEFAULT 0"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -492,6 +507,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (12, "bot_improvement_suggestions", _bot_improvement_suggestions),
     (13, "online_retro_confirmed_meetings", _online_retro_confirmed_meetings),
     (14, "session_passes", _session_passes),
+    (15, "sessions_resting", _sessions_resting),
 )
 
 
