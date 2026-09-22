@@ -467,6 +467,57 @@ class RenameAndRestTest(WeeklyScheduleTestCase):
         self.assertEqual(self._query(response)["resting"], ["9기 추가 회차"])
         self.assertNotIn("9기 추가 회차", sessions.load_schedule()[0])
 
+    async def test_withdrawing_the_rest_week_undoes_the_postponement(self):
+        """미루고 나서 쉬어가는 주를 빼면 미루기 전 일정으로 돌아가야 한다."""
+        self._weekly()
+        before = sessions.list_sessions()
+        await self._post("/schedule/postpone", name="9기 2회차", weeks="2")
+
+        for extra in ["9기 추가 회차", "9기 추가 회차 2"]:
+            response = await self._post("/schedule/withdraw", name=extra)
+            self.assertEqual(self._query(response)["withdrawn"], [extra])
+
+        after = sessions.list_sessions()
+        self.assertEqual(
+            [(row["name"], row["due_at"], row["announce_at"]) for row in after],
+            [(row["name"], row["due_at"], row["announce_at"]) for row in before],
+        )
+
+    async def test_refuses_to_withdraw_a_week_in_use(self):
+        """회차로 쓰는 주를 빼면 멀쩡한 회차 하나가 사라진다."""
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        await self._post("/schedule/rest", name="9기 추가 회차", resting="0")
+
+        response = await self._post("/schedule/withdraw", name="9기 추가 회차")
+        self.assertIn("회차로 쓰는 중", self._query(response)["error"][0])
+        self.assertIsNotNone(sessions.get_session("9기 추가 회차"))
+        self.assertEqual(self._due("9기 2회차"), self.FIRST + self.WEEK * 2)
+
+    async def test_refuses_to_pull_a_deadline_that_was_announced(self):
+        """공지에 적힌 마감보다 앞당겨지면 그걸 믿은 사람이 제출을 놓친다."""
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE sessions SET announced_at = ? WHERE name = ?",
+                (self.FIRST.isoformat(), "9기 3회차"),
+            )
+        sessions.invalidate()
+
+        response = await self._post("/schedule/withdraw", name="9기 추가 회차")
+        self.assertIn("9기 3회차", self._query(response)["error"][0])
+        self.assertEqual(self._due("9기 2회차"), self.FIRST + self.WEEK * 2)
+
+    async def test_page_offers_withdraw_only_on_resting_weeks(self):
+        self._weekly()
+        await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        body = await (await self.client.get("/schedule?all=1", headers=self._headers())).text()
+        resting = body.split("<td>9기 추가 회차</td>", 1)[1].split("</tr>", 1)[0]
+        working = body.split("<td>9기 3회차</td>", 1)[1].split("</tr>", 1)[0]
+        self.assertIn("/schedule/withdraw", resting)
+        self.assertNotIn("/schedule/withdraw", working)
+
     async def test_refuses_to_rest_a_session_with_submissions(self):
         self._weekly()
         self._submit("9기 2회차")

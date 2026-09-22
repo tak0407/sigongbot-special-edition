@@ -48,6 +48,7 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
     app.router.add_post("/schedule/postpone", schedule.handle_postpone)
     app.router.add_post("/schedule/rename", schedule.handle_rename)
     app.router.add_post("/schedule/rest", schedule.handle_rest)
+    app.router.add_post("/schedule/withdraw", schedule.handle_withdraw)
     app.router.add_get("/schedule/announcement", announcement.handle)
     app.router.add_post("/schedule/announcement", announcement.handle_save)
     app.router.add_post("/schedule/announcement/time", announcement.handle_schedule)

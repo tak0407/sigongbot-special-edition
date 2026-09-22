@@ -192,9 +192,9 @@ def postpone_from(name: str, weeks: int, *, now: datetime.datetime) -> dict:
     쉬어가는 주만 일정에서 비워진다. 회차 이름은 회고 행에 박히는 조인 키라
     건드리지 않는다.
 
-    밀고 나면 원래 자리가 비므로 그 자리에 `추가 회차`를 세워 둔다. 표에서
-    빈자리가 이유 없이 비어 보이지 않게 하려는 것이고, 정말 쉬어갈 주라면
-    관리자가 지우면 된다. 공지는 꺼진 채로 만든다.
+    밀고 나면 원래 자리가 비므로 그 자리에 쉬어가는 `추가 회차`를 세워 둔다.
+    관리자가 회차로 쓰기로 하면 보충 회차가 되고, 미루기를 되돌리려면
+    `withdraw_rest_week`로 그 주를 빼고 뒤를 당긴다.
 
     돌려주는 값의 `announced`는 이미 공지가 나간 회차이고 `filled`는 새로 세운
     회차다. 공지가 나간 회차의 본문에는 옛 마감이 적혀 있어 관리자가 따로
@@ -379,6 +379,73 @@ def set_resting(name: str, resting: bool, *, now: datetime.datetime) -> None:
             (1 if resting else 0, name),
         )
     invalidate()
+
+def withdraw_rest_week(name: str, *, now: datetime.datetime) -> list[str]:
+    """쉬어가는 주를 일정에서 빼고 뒤 회차를 한 주씩 당긴다. 미루기를 되돌린다.
+
+    미루기는 뒤 회차를 N주 밀고 비는 자리에 쉬어가는 주를 세운다. 그 주를 하나
+    뺄 때마다 뒤를 한 주씩 당기면 미루기 전 일정으로 돌아간다. 쉬어가는 주만
+    뺄 수 있다. 회차로 쓰고 있는 주를 빼면 멀쩡한 회차 하나가 사라진다.
+
+    공지가 이미 나간 뒤 회차가 있으면 막는다. 공지에 적힌 마감보다 실제 마감이
+    앞당겨지면 그걸 믿고 기다리던 사람이 제출을 놓친다. 돌려주는 값은 당긴 회차다.
+    """
+    week = datetime.timedelta(weeks=1)
+    with get_connection() as connection:
+        _changeable(connection, name, now)
+        found = [
+            _session(row)
+            for row in connection.execute(
+                "SELECT name, due_at, announce_at, announcement, announced_at, resting"
+                "  FROM sessions"
+            ).fetchall()
+        ]
+        found.sort(key=lambda row: row["due_at"])
+        target = next(row for row in found if row["name"] == name)
+        if not target["resting"]:
+            raise ScheduleError(
+                f"`{name}`은(는) 회차로 쓰는 중입니다. 먼저 쉬어가기로 바꾼 뒤 빼세요."
+            )
+
+        before = [row for row in found if row["due_at"] < target["due_at"]]
+        later = [row for row in found if row["due_at"] > target["due_at"]]
+        sent = [row["name"] for row in later if row["announced_at"] is not None]
+        if sent:
+            raise ScheduleError(
+                f"`{sent[0]}` 공지가 이미 나가 마감을 앞당길 수 없습니다."
+            )
+        if later:
+            first = later[0]["due_at"] - week
+            if first <= now:
+                raise ScheduleError(
+                    f"당기면 `{later[0]['name']}` 마감이 이미 지난 시각이 됩니다."
+                )
+            # 당긴 첫 회차가 앞 회차와 겹치거나 앞서면 회차 순서가 뒤집힌다.
+            if before and first <= before[-1]["due_at"]:
+                raise ScheduleError(
+                    f"당기면 `{later[0]['name']}` 마감이 `{before[-1]['name']}`보다 앞서게 됩니다."
+                )
+
+        connection.execute("DELETE FROM sessions WHERE name = ?", (name,))
+        for row in later:
+            announce_at = row["announce_at"]
+            if announce_at is not None:
+                announce_at = announce_at - week
+            connection.execute(
+                """
+                UPDATE sessions
+                   SET due_at = ?, announce_at = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE name = ?
+                """,
+                (
+                    (row["due_at"] - week).isoformat(),
+                    announce_at.isoformat() if announce_at else None,
+                    row["name"],
+                ),
+            )
+    invalidate()
+    return [row["name"] for row in later]
+
 
 # --- 매회차 제출 공지 -------------------------------------------------------
 #

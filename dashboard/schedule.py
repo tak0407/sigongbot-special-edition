@@ -23,6 +23,7 @@ from database.sessions import (
     postpone_from,
     rename_session,
     set_resting,
+    withdraw_rest_week,
     update_due_at,
 )
 from utils import format_remaining_time, get_current_session_info, tz_now
@@ -150,6 +151,19 @@ def _name_form(request, row: dict) -> str:
         f'<input type="hidden" name="resting" value="{0 if row["resting"] else 1}">'
         f'<button type="submit">{"회차로 쓰기" if row["resting"] else "쉬어가기"}</button>'
         "</form>"
+        + _withdraw_form(token, name, row)
+    )
+
+
+def _withdraw_form(token: str, name: str, row: dict) -> str:
+    """쉬어가는 주를 빼고 뒤 회차를 당겨 미루기를 되돌린다."""
+    if not row["resting"]:
+        return ""
+    return (
+        '<form method="post" class="inline" action="/schedule/withdraw">'
+        f'<input type="hidden" name="csrf_token" value="{token}">'
+        f'<input type="hidden" name="name" value="{name}">'
+        '<button type="submit">빼고 당기기</button></form>'
     )
 
 
@@ -259,6 +273,12 @@ async def handle(request: web.Request) -> web.Response:
             f'<div class="warn">`{escape(request.query["renamed"])}` 회차 이름을 '
             f'`{escape(request.query.get("to", ""))}`(으)로 바꿨습니다.</div>'
         )
+    elif request.query.get("withdrawn"):
+        pulled = request.query.get("pulled", "0")
+        notice = (
+            f'<div class="warn">`{escape(request.query["withdrawn"])}` 주를 빼고 '
+            f"뒤 회차 {escape(pulled)}개를 1주씩 당겼습니다.</div>"
+        )
     elif request.query.get("resting"):
         notice = (
             f'<div class="warn">`{escape(request.query["resting"])}` 주는 쉬어갑니다. '
@@ -361,6 +381,20 @@ def _parse_weeks(raw: str) -> int:
         return int((raw or "").strip())
     except ValueError:
         raise ScheduleError("미룰 주 수를 고르세요.") from None
+
+
+@require_admin
+async def handle_withdraw(request: web.Request) -> web.StreamResponse:
+    form = await request.post()
+    name = str(form.get("name", "")).strip()
+    try:
+        pulled = await asyncio.to_thread(withdraw_rest_week, name, now=tz_now())
+    except ScheduleError as error:
+        raise _redirect(error=str(error))
+    logger.info(
+        "관리자 웹에서 쉬어가는 주를 빼고 당깁니다 - name={} pulled={}", name, len(pulled)
+    )
+    raise _redirect(withdrawn=name, pulled=len(pulled))
 
 
 @require_admin
