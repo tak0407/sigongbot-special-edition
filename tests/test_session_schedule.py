@@ -360,7 +360,7 @@ class PostponeTest(WeeklyScheduleTestCase):
         )
         response = await self.client.get("/schedule?all=1", headers=self._headers())
         body = await response.text()
-        rest = '<tr class="rest"><td colspan="7">쉬어가는 주 · 1주 · 회고 없음</td></tr>'
+        rest = '<tr class="rest"><td colspan="6">쉬어가는 주 · 1주 · 회고 없음</td></tr>'
         self.assertIn(rest, body)
         # 쉬어가는 주는 미뤄진 회차 바로 앞에 놓인다.
         self.assertLess(body.index(rest), body.index("<td>9기 3회차</td>"))
@@ -509,6 +509,14 @@ class RenameAndRestTest(WeeklyScheduleTestCase):
         self.assertIn("9기 3회차", self._query(response)["error"][0])
         self.assertEqual(self._due("9기 2회차"), self.FIRST + self.WEEK * 2)
 
+    async def test_result_notice_shows_above_the_table(self):
+        """버튼을 누르고 돌아왔을 때 결과가 스크롤 아래에 묻히면 안 된다."""
+        self._weekly()
+        response = await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
+        location = response.headers["Location"]
+        body = await (await self.client.get(location, headers=self._headers())).text()
+        self.assertLess(body.index("미뤘습니다"), body.index("<table>"))
+
     async def test_page_offers_withdraw_only_on_resting_weeks(self):
         self._weekly()
         await self._post("/schedule/postpone", name="9기 2회차", weeks="1")
@@ -516,6 +524,9 @@ class RenameAndRestTest(WeeklyScheduleTestCase):
         resting = body.split("<td>9기 추가 회차</td>", 1)[1].split("</tr>", 1)[0]
         working = body.split("<td>9기 3회차</td>", 1)[1].split("</tr>", 1)[0]
         self.assertIn("/schedule/withdraw", resting)
+        self.assertIn(">삭제하기</button>", resting)
+        # 뒤 회차 마감이 전부 움직이므로 누르기 전에 알린다.
+        self.assertIn("뒤 회차가 한 주씩 당겨집니다", resting)
         self.assertNotIn("/schedule/withdraw", working)
 
     async def test_refuses_to_rest_a_session_with_submissions(self):

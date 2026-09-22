@@ -59,6 +59,14 @@ a{color:#2b5ce6}
 .pill.failed{background:#fdecea;color:#b42318}
 .pill.now{background:#e8edfb;color:#1b3fa8;font-weight:600}
 tr.rest td{background:#f7f8fa;color:#667085;font-size:13px}
+.manage summary,.section summary{cursor:pointer;color:#2b5ce6;font-weight:600}
+.manage[open]{min-width:280px}
+.manage .field{margin-top:10px}
+.manage .field>small{display:block;margin-bottom:4px}
+.manage .actions{display:flex;gap:6px;flex-wrap:wrap}
+.section{margin-top:28px}
+.section summary{font-size:16px;margin-bottom:8px}
+button.danger{border-color:#b42318;color:#b42318}
 .cloud{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;list-style:none;margin:14px 0;padding:14px;background:#f7f8fa;border-radius:12px}
 .cloud .word{line-height:1.25;color:#667085}
 .cloud .word.strong{color:#1b3fa8;font-weight:600}

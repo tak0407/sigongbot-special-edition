@@ -119,57 +119,78 @@ def _collect(show_all: bool) -> dict:
     }
 
 
-def _due_form(request, row: dict) -> str:
-    """예정 회차만 마감 시각을 고칠 수 있게 폼을 연다."""
-    if not row["editable"]:
-        return ""
+def _due_form(token: str, row: dict) -> str:
     value = row["due"].strftime("%Y-%m-%dT%H:%M")
     return (
+        '<div class="field"><small>마감 변경</small>'
         '<form method="post" class="inline" action="/schedule/due">'
-        f'<input type="hidden" name="csrf_token" value="{csrf_token(request)}">'
+        f'<input type="hidden" name="csrf_token" value="{token}">'
         f'<input type="hidden" name="name" value="{escape(row["name"])}">'
         f'<input aria-label="마감 시각 (KST)" type="datetime-local" name="due_at" value="{value}" required>'
-        "<button type=\"submit\">변경</button></form>"
+        '<button type="submit">변경</button></form></div>'
     )
 
 
-def _name_form(request, row: dict) -> str:
-    """아직 기록이 붙지 않은 예정 회차만 이름을 바꾸거나 쉬어갈 수 있다."""
-    if not row["changeable"]:
-        return ""
-    token = csrf_token(request)
-    name = escape(row["name"])
+def _rename_form(token: str, name: str) -> str:
     return (
+        '<div class="field"><small>이름 변경</small>'
         '<form method="post" class="inline" action="/schedule/rename">'
         f'<input type="hidden" name="csrf_token" value="{token}">'
         f'<input type="hidden" name="name" value="{name}">'
         f'<input aria-label="새 회차 이름" type="text" name="new_name" value="{name}" required>'
-        '<button type="submit">이름 변경</button></form>'
+        '<button type="submit">변경</button></form></div>'
+    )
+
+
+def _rest_form(token: str, name: str, row: dict) -> str:
+    return (
         '<form method="post" class="inline" action="/schedule/rest">'
         f'<input type="hidden" name="csrf_token" value="{token}">'
         f'<input type="hidden" name="name" value="{name}">'
         f'<input type="hidden" name="resting" value="{0 if row["resting"] else 1}">'
         f'<button type="submit">{"회차로 쓰기" if row["resting"] else "쉬어가기"}</button>'
         "</form>"
-        + _withdraw_form(token, name, row)
     )
 
 
-def _withdraw_form(token: str, name: str, row: dict) -> str:
-    """쉬어가는 주를 빼고 뒤 회차를 당겨 미루기를 되돌린다."""
-    if not row["resting"]:
-        return ""
+def _withdraw_form(token: str, name: str) -> str:
+    """쉬어가는 주를 삭제하고 뒤 회차를 당겨 미루기를 되돌린다.
+
+    뒤 회차 전부의 마감이 움직이는 일이라 누르기 전에 한 번 더 알린다. 회차
+    이름은 `NAME_PATTERN`을 거쳐 따옴표가 없으므로 확인 문구에 넣어도 안전하다.
+    """
     return (
-        '<form method="post" class="inline" action="/schedule/withdraw">'
+        '<form method="post" class="inline" action="/schedule/withdraw"'
+        f' onsubmit="return confirm(\'{name}을(를) 삭제하면 뒤 회차가 한 주씩 당겨집니다. 삭제할까요?\')">'
         f'<input type="hidden" name="csrf_token" value="{token}">'
         f'<input type="hidden" name="name" value="{name}">'
-        '<button type="submit">빼고 당기기</button></form>'
+        '<button type="submit" class="danger">삭제하기</button></form>'
     )
+
+
+def _manage_cell(request, row: dict) -> str:
+    """행 편집을 `관리` 하나로 접는다.
+
+    예정 회차는 마감을, 아직 기록이 붙지 않은 회차는 이름과 쉬어가기를,
+    쉬어가는 주는 삭제까지 고칠 수 있다. 고칠 게 없는 지난 회차는 비워 둔다.
+    """
+    if not row["editable"]:
+        return ""
+    token = csrf_token(request)
+    name = escape(row["name"])
+    parts = [_due_form(token, row)]
+    if row["changeable"]:
+        parts.append(_rename_form(token, name))
+        actions = _rest_form(token, name, row)
+        if row["resting"]:
+            actions += _withdraw_form(token, name)
+        parts.append(f'<div class="field"><small>쉬어가기</small><div class="actions">{actions}</div></div>')
+    return f'<details class="manage"><summary>관리</summary>{"".join(parts)}</details>'
 
 
 def _rest_row(weeks: int) -> str:
     return (
-        '<tr class="rest"><td colspan="7">'
+        '<tr class="rest"><td colspan="6">'
         f'쉬어가는 주 · {weeks}주 · 회고 없음'
         "</td></tr>"
     )
@@ -218,11 +239,10 @@ def _schedule_rows(request, data: dict) -> str:
             f"<td>{status}</td>"
             f"<td>{row['submitters']}명{separate_submission_count(row['separate_submissions'])}</td>"
             f"<td>{row['announcement_state']} <a href=\"{link}\">문구</a></td>"
-            f"<td>{_due_form(request, row)}</td>"
-            f"<td>{_name_form(request, row)}</td>"
+            f"<td>{_manage_cell(request, row)}</td>"
             "</tr>"
         )
-    return rows(items, 7, "표시할 회차가 없습니다.")
+    return rows(items, 6, "표시할 회차가 없습니다.")
 
 
 @require_admin
@@ -276,8 +296,8 @@ async def handle(request: web.Request) -> web.Response:
     elif request.query.get("withdrawn"):
         pulled = request.query.get("pulled", "0")
         notice = (
-            f'<div class="warn">`{escape(request.query["withdrawn"])}` 주를 빼고 '
-            f"뒤 회차 {escape(pulled)}개를 1주씩 당겼습니다.</div>"
+            f'<div class="warn">`{escape(request.query["withdrawn"])}`을(를) 삭제하고 '
+            f"뒤 회차 {escape(pulled)}개를 한 주씩 당겼습니다.</div>"
         )
     elif request.query.get("resting"):
         notice = (
@@ -305,35 +325,35 @@ async def handle(request: web.Request) -> web.Response:
 <div class="{'card alert' if data['upcoming'] <= LOW_REMAINING else 'card'}">남은 회차<div class="number">{data['upcoming']}개</div><small>마지막 마감 {data['last_due'].strftime('%Y-%m-%d')}</small></div>
 </section>
 {warning}
-<div class="filters"><small>{escape(data['current_cohort'])} 일정</small>{toggle}</div>
-<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>마감 변경</th><th>이름·삭제</th></tr></thead>
-<tbody>{_schedule_rows(request, data)}</tbody></table></div>
-<small>마감이 지난 회차는 바꿀 수 없습니다. 그 구간에 제출된 회고가 다른 회차에 속한 것처럼 집계되기 때문입니다.
-회차 이름은 회고에 그대로 기록되는 값이라, 아직 제출도 공지도 없는 예정 회차만 이름을 바꾸거나 쉬어갈 수 있습니다.
-`쉬어가는 주`로 둔 회차는 회차 판정과 공지에서 빠져 그 주에는 마감이 없고, 다시 `회차로 쓰기`를 누르면 돌아옵니다.</small>
-<h2>연휴로 회차 미루기</h2>
-<small>추석·설처럼 한 주 쉬어갈 때 씁니다. 고른 회차부터 마지막 회차까지 한꺼번에 밀리므로
-회차 이름과 순서, 회차 사이 간격은 그대로고 기수만 그만큼 늦게 끝납니다.
-밀고 나서 비는 주에는 `추가 회차`가 `쉬어가는 주`로 세워집니다. 그대로 두면 그 주에는 마감이 없고,
-보충 회차로 쓸 거면 위 표에서 `회차로 쓰기`를 눌러 이름과 공지를 정하세요.
-아직 나가지 않은 제출 공지도 같은 간격으로 따라 밀립니다.
+{notice}
+<h2>회차 미루기</h2>
+<small>고른 회차부터 마지막 회차까지 N주씩 한꺼번에 밉니다. 회차 이름과 순서는 그대로이고, 아직 나가지 않은 공지도 같이 밀립니다.
+비는 주에는 `추가 회차`가 `쉬어가는 주`로 생깁니다. 그 주에도 회고를 받으려면 표의 `관리`에서 `회차로 쓰기`를, 되돌리려면 `삭제하기`를 누르세요.
 한 번에 최대 {MAX_POSTPONE_WEEKS}주까지 미룰 수 있습니다.</small>
 {_postpone_form(request, data)}
-<h2>회차 추가</h2>
+<h2>회차 목록</h2>
+<div class="filters"><small>{escape(data['current_cohort'])} 일정</small>{toggle}</div>
+<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>회차</th><th>마감 (KST)</th><th>상태</th><th>제출자</th><th>제출 공지</th><th>관리</th></tr></thead>
+<tbody>{_schedule_rows(request, data)}</tbody></table></div>
+<small>`관리`를 누르면 그 회차를 고칠 수 있습니다. 마감이 지난 회차는 그 구간에 제출된 회고가 다른 회차로 집계되지 않도록 고칠 수 없고,
+이름과 쉬어가기는 아직 제출도 공지도 없는 예정 회차만 바꿀 수 있습니다.
+`쉬어가는 주`는 회차 판정과 공지에서 빠져 그 주에는 마감이 없습니다. `회차로 쓰기`를 누르면 돌아오고, `삭제하기`를 누르면 뒤 회차가 한 주씩 당겨집니다.</small>
+<details class="section"><summary>회차 추가</summary>
 <small>마지막 회차({escape(data['last_name'])}, {data['last_due'].strftime('%Y-%m-%d %H:%M')}) 뒤에만 붙일 수 있습니다.</small>
 <form method="post" action="/schedule/add" class="filters">
 <input type="hidden" name="csrf_token" value="{csrf_token(request)}">
 <input aria-label="새 회차 이름" type="text" name="name" placeholder="7기 1회차" required>
 <input aria-label="마감 시각 (KST)" type="datetime-local" name="due_at" required>
 <button type="submit">추가</button></form>
-<h2>제출 공지 기본 문구</h2>
+</details>
+<details class="section"><summary>제출 공지 기본 문구</summary>
 <small>공지 시각이 되면 이 문구가 회차마다 나갑니다. {PLACEHOLDER_HELP}
 특정 회차만 다르게 쓰려면 위 표의 `문구`에서 그 회차만 덮어씁니다.</small>
 <form method="post" action="/schedule/announcement/template">
 <input type="hidden" name="csrf_token" value="{csrf_token(request)}">
 <textarea aria-label="공지 문구" name="body" rows="8" maxlength="{MAX_ANNOUNCEMENT_LENGTH}" required>{escape(data['template'])}</textarea>
 <div class="filters"><button type="submit">기본 문구 저장</button></div></form>
-{notice}
+</details>
 """
     return web.Response(
         text=layout.render(
@@ -392,7 +412,7 @@ async def handle_withdraw(request: web.Request) -> web.StreamResponse:
     except ScheduleError as error:
         raise _redirect(error=str(error))
     logger.info(
-        "관리자 웹에서 쉬어가는 주를 빼고 당깁니다 - name={} pulled={}", name, len(pulled)
+        "관리자 웹에서 쉬어가는 주를 삭제하고 당깁니다 - name={} pulled={}", name, len(pulled)
     )
     raise _redirect(withdrawn=name, pulled=len(pulled))
 

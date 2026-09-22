@@ -194,7 +194,7 @@ def postpone_from(name: str, weeks: int, *, now: datetime.datetime) -> dict:
 
     밀고 나면 원래 자리가 비므로 그 자리에 쉬어가는 `추가 회차`를 세워 둔다.
     관리자가 회차로 쓰기로 하면 보충 회차가 되고, 미루기를 되돌리려면
-    `withdraw_rest_week`로 그 주를 빼고 뒤를 당긴다.
+    `withdraw_rest_week`로 그 주를 삭제하고 뒤를 당긴다.
 
     돌려주는 값의 `announced`는 이미 공지가 나간 회차이고 `filled`는 새로 세운
     회차다. 공지가 나간 회차의 본문에는 옛 마감이 적혀 있어 관리자가 따로
