@@ -16,6 +16,7 @@ from dashboard import register_dashboard_routes
 from dashboard import auth
 from dashboard import directory as slack_directory
 from dashboard import members
+from dashboard import overview
 from database.sqlite import get_connection, initialize_database
 
 
@@ -196,8 +197,9 @@ class DashboardTest(AdminWebTestCase):
         body = await self._body()
         self.assertIn('<div class="card alert">게시 기록 미확인<div class="number">1건</div>', body)
 
-    async def test_dashboard_shows_words_shared_by_this_session(self):
+    async def test_dashboard_shows_words_shared_by_the_last_closed_session(self):
         """한 사람만 쓴 말은 이름표 없이 대시보드에 걸리지 않아야 한다."""
+        self.enterContext(patch.object(overview, "_word_session", return_value="6기 1회차"))
         with get_connection() as connection:
             connection.execute(
                 "INSERT INTO retrospectives (user_id, session_name, slack_channel,"
@@ -210,12 +212,14 @@ class DashboardTest(AdminWebTestCase):
                 " WHERE user_id = 'U11111111' AND session_name = '6기 1회차'"
             )
         body = await self._body()
-        self.assertIn("이번 회차에 자주 나온 말", body)
+        self.assertIn("지난 회차에 자주 나온 말", body)
+        self.assertIn("마감된 6기 1회차 회고", body)
         self.assertIn('class="cloud"', body)
         self.assertIn(">면접<", body)
         self.assertNotIn("혼자만의고민", body)
 
     async def test_dashboard_word_cloud_ignores_test_submissions(self):
+        self.enterContext(patch.object(overview, "_word_session", return_value="6기 1회차"))
         with get_connection() as connection:
             for index in range(2):
                 connection.execute(
@@ -226,6 +230,29 @@ class DashboardTest(AdminWebTestCase):
                     (f"U9999999{index}", f"9.{index}"),
                 )
         self.assertNotIn("테스트낱말", await self._body())
+
+    def test_word_cloud_reads_the_most_recently_closed_session(self):
+        """진행 중인 회차는 회고가 다 모이기 전이라 쓰지 않는다."""
+        kst = ZoneInfo("Asia/Seoul")
+        schedule = (
+            ["6기 1회차", "6기 2회차", "6기 3회차"],
+            [
+                datetime.datetime(2026, 9, 15, 5, tzinfo=kst),
+                datetime.datetime(2026, 9, 22, 5, tzinfo=kst),
+                datetime.datetime(2026, 9, 29, 5, tzinfo=kst),
+            ],
+        )
+        with patch.object(overview, "load_schedule", return_value=schedule):
+            now = datetime.datetime(2026, 9, 23, 12, tzinfo=kst)
+            self.assertEqual(overview._word_session(now), "6기 2회차")
+            before = datetime.datetime(2026, 9, 14, tzinfo=kst)
+            self.assertIsNone(overview._word_session(before))
+
+    async def test_dashboard_word_cloud_waits_for_a_closed_session(self):
+        self.enterContext(patch.object(overview, "_word_session", return_value=None))
+        body = await self._body()
+        self.assertIn("아직 마감된 회차가 없습니다", body)
+        self.assertNotIn('class="cloud"', body)
 
     async def test_dashboard_auto_refreshes(self):
         body = await self._body()
