@@ -507,6 +507,20 @@ def _session_passes_source(connection: sqlite3.Connection) -> None:
     )
 
 
+def _online_retro_poll_intro(connection: sqlite3.Connection) -> None:
+    """관리자가 투표를 올릴 때 고친 공지 문구.
+
+    투표가 바뀔 때마다 메시지를 다시 그리므로 처음 올린 문구를 투표마다 남긴다.
+    비어 있으면 기본 문구를 쓴다.
+    """
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(online_retro_time_polls)")
+    }
+    if "intro_template" in columns:
+        return
+    connection.execute("ALTER TABLE online_retro_time_polls ADD COLUMN intro_template TEXT")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -524,6 +538,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (14, "session_passes", _session_passes),
     (15, "sessions_resting", _sessions_resting),
     (16, "session_passes_source", _session_passes_source),
+    (17, "online_retro_poll_intro", _online_retro_poll_intro),
 )
 
 

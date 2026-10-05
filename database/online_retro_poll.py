@@ -14,15 +14,26 @@ async def create_poll(
     team_name: str,
     slots: list[str],
     is_test: bool,
+    intro_template: str | None = None,
 ) -> dict:
+    """팀·날짜마다 투표 하나만 만든다.
+
+    게시에 실패해 아직 Slack에 없는 투표는 다시 올릴 때 팀 이름과 문구를
+    새 값으로 바꾼다. 이미 올라간 투표는 그대로 둔다.
+    """
+
     def insert() -> dict:
         with get_connection() as connection:
             connection.execute(
                 """
-                INSERT OR IGNORE INTO online_retro_time_polls (
+                INSERT INTO online_retro_time_polls (
                     meeting_date, session_name, team_channel, team_name,
-                    slots_json, is_test
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    slots_json, is_test, intro_template
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(meeting_date, team_channel, is_test) DO UPDATE SET
+                    team_name = excluded.team_name,
+                    intro_template = excluded.intro_template
+                 WHERE online_retro_time_polls.slack_ts IS NULL
                 """,
                 (
                     meeting_date,
@@ -31,6 +42,7 @@ async def create_poll(
                     team_name,
                     json.dumps(slots, ensure_ascii=False),
                     int(is_test),
+                    intro_template,
                 ),
             )
             row = connection.execute(

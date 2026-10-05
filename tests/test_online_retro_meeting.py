@@ -449,6 +449,10 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("⭐", empty[1]["text"]["text"])
         self.assertIn("0명 응답", empty[3]["elements"][0]["text"])
 
+        edited = build_poll_blocks({**poll, "intro_template": "{팀}, {날짜} {모임}"}, {}, 0)
+        # 정해 둔 치환자만 바꾸고 다른 중괄호는 그대로 둔다.
+        self.assertEqual(edited[0]["text"]["text"], "그린팀, 10월 11일(일) {모임}")
+
 
 if __name__ == "__main__":
     unittest.main()

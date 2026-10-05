@@ -29,12 +29,26 @@ UNAVAILABLE_LABEL = "이번엔 어려워요"
 ALL_OPTIONS = TIME_SLOTS + [UNAVAILABLE]
 WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
 NOT_ON_TEAM = "자신이 배정된 팀의 시간 투표에만 참여할 수 있어요."
+DEFAULT_POLL_INTRO = (
+    "*{팀}은 고개를 들어주세요!* 🙌\n"
+    "{날짜} 온라인 회고, 참여할 수 있는 시간을 모두 골라 주세요."
+)
+MAX_POLL_INTRO_LENGTH = 1000
 
 
 def meeting_day(meeting_date: str) -> str:
     """'2026-10-11' → '10월 11일(일)'."""
     day = datetime.date.fromisoformat(meeting_date)
     return f"{day.month}월 {day.day}일({WEEKDAYS[day.weekday()]})"
+
+
+def render_poll_intro(template: str | None, *, team_name: str, meeting_date: str) -> str:
+    """`{팀}`·`{날짜}`를 팀마다 바꾼다. 남은 중괄호에 걸리지 않게 format은 쓰지 않는다."""
+    return (
+        (template or DEFAULT_POLL_INTRO)
+        .replace("{팀}", team_name)
+        .replace("{날짜}", meeting_day(meeting_date))
+    )
 
 
 def _can_vote(poll: dict, user_id: str) -> bool:
@@ -62,10 +76,11 @@ def build_poll_blocks(poll: dict, counts: dict[str, int], voters: int) -> list[d
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": (
-                    f"{prefix}*{poll['team_name']}은 고개를 들어주세요!* 🙌\n"
-                    f"{meeting_day(poll['meeting_date'])} 온라인 회고, "
-                    "참여할 수 있는 시간을 모두 골라 주세요."
+                "text": prefix
+                + render_poll_intro(
+                    poll.get("intro_template"),
+                    team_name=poll["team_name"],
+                    meeting_date=poll["meeting_date"],
                 ),
             },
         },
@@ -163,6 +178,7 @@ async def post_team_time_poll(
     meeting_date: datetime.date,
     session_name: str,
     is_test: bool = False,
+    intro_template: str | None = None,
 ) -> dict:
     poll = await create_poll(
         meeting_date=meeting_date.isoformat(),
@@ -171,6 +187,7 @@ async def post_team_time_poll(
         team_name=team_name,
         slots=ALL_OPTIONS,
         is_test=is_test,
+        intro_template=intro_template,
     )
     if poll["slack_ts"]:
         return poll

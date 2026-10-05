@@ -232,6 +232,22 @@ form.inline button{padding:6px 10px}
 .detail-table{border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
 .detail-table th{width:112px}
 .detail-table th,.detail-table td{padding:12px 14px}
+h2.retro-date{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px}
+h2.retro-date small{font-size:13px;font-weight:500}
+.retro-teams{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin:12px 0 4px}
+.retro-team{display:flex;flex-direction:column;gap:10px;min-width:0;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--soft)}
+.retro-team h3{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;font-size:15px}
+.retro-team .meta{font-size:12.5px;line-height:1.6;color:var(--muted);overflow-wrap:anywhere}
+.retro-team .meta b{color:var(--ink)}
+.retro-team .votes{display:grid;grid-template-columns:auto minmax(40px,1fr) auto;gap:5px 10px;align-items:center;font-size:13px}
+.retro-team .votes .bar{width:auto}
+.retro-team .votes .top{color:#087443;font-weight:650}
+.retro-team form{display:flex;flex-wrap:wrap;gap:8px;margin:0}
+.retro-team form select{flex:1 1 130px}
+.retro-team form button{flex:1 1 auto}
+.retro-team form.inline{justify-content:flex-end}
+.retro-team form.inline button{flex:0 0 auto}
+.retro-targets{margin:4px 0 0;padding-left:18px;line-height:1.8}
 @media(max-width:980px){.side{flex-basis:224px}main{padding:30px 24px 56px}}
 @media(max-width:760px){
  .side{position:static;height:auto;overflow:visible;border:0;border-radius:0 0 16px 16px;padding:12px 16px 14px;box-shadow:0 6px 18px #10182816}

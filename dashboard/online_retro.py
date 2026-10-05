@@ -15,7 +15,7 @@ from slack_sdk.errors import SlackApiError
 from config import settings
 from dashboard import layout
 from dashboard.auth import csrf_token, require_admin
-from dashboard.common import rows, to_kst
+from dashboard.common import to_kst
 from dashboard.directory import SLACK_CLIENT, channel_cell, get_directory
 from database.online_retro_confirmation import get_confirmation
 from database.online_retro_poll import get_poll, list_polls
@@ -26,12 +26,37 @@ from slack.events.online_retro_confirmation import (
     format_meeting_time,
     slot_to_range,
 )
-from slack.events.online_retro_poll import TIME_SLOTS, post_team_time_poll
+from slack.events.online_retro_poll import (
+    DEFAULT_POLL_INTRO,
+    MAX_POLL_INTRO_LENGTH,
+    TIME_SLOTS,
+    UNAVAILABLE,
+    UNAVAILABLE_LABEL,
+    meeting_day,
+    post_team_time_poll,
+)
 from utils import get_current_session_info, tz_now
 
 PAGE_PATH = "/online-retro"
-TEAM_NAME_MAX = 20
 POLL_WINDOW = f"{TIME_SLOTS[0].split('~')[0]}~{TIME_SLOTS[-1].split('~')[1]}"
+# 6기 팀 채널은 `blue-team-weekly-report`처럼 색 이름으로 시작한다. 여기에 없는
+# 이름이면 지난 투표의 팀 이름, 그것도 없으면 채널 이름을 쓴다.
+TEAM_COLORS = {
+    "blue": "블루",
+    "green": "그린",
+    "yellow": "옐로우",
+    "red": "레드",
+    "orange": "오렌지",
+    "purple": "퍼플",
+    "pink": "핑크",
+    "black": "블랙",
+    "white": "화이트",
+    "gray": "그레이",
+    "grey": "그레이",
+    "navy": "네이비",
+    "mint": "민트",
+    "brown": "브라운",
+}
 STATUS_LABELS = {
     "pending": "생성 중",
     "confirmed": "확정",
@@ -94,8 +119,20 @@ def session_for_meeting(meeting_date: str) -> str:
     return first
 
 
+def team_name_from_channel(channel_name: str) -> str:
+    """'blue-team-weekly-report' → '블루팀'. 색 이름으로 시작하지 않으면 ''."""
+    color = TEAM_COLORS.get(channel_name.split("-", 1)[0].lower())
+    return f"{color}팀" if color else ""
+
+
 def _team_channels() -> list[str]:
     return sorted(set(settings.SUBMISSION_DESTINATIONS.values()))
+
+
+def _team_size(team_channel: str) -> int:
+    return sum(
+        1 for channel in settings.SUBMISSION_DESTINATIONS.values() if channel == team_channel
+    )
 
 
 def _posted_channels(polls: list[dict], meeting_date: str) -> set[str]:
@@ -107,12 +144,34 @@ def _posted_channels(polls: list[dict], meeting_date: str) -> set[str]:
 
 
 def _latest_team_names(polls: list[dict]) -> dict[str, str]:
-    """채널마다 가장 최근 투표의 팀 이름. 다음 달에는 다시 입력하지 않아도 된다."""
     names: dict[str, str] = {}
     for poll in polls:  # list_polls()는 최근 날짜부터 돌려준다.
         if not poll["is_test"]:
             names.setdefault(poll["team_channel"], poll["team_name"])
     return names
+
+
+def _latest_intro(polls: list[dict]) -> str:
+    """가장 나중에 만든 투표의 공지 문구. 다음 달에는 이 문구에서 고치면 된다."""
+    latest = max(
+        (poll for poll in polls if not poll["is_test"]),
+        key=lambda poll: poll["id"],
+        default=None,
+    )
+    return (latest or {}).get("intro_template") or DEFAULT_POLL_INTRO
+
+
+def _team_labels(channels: list[str], directory: dict, polls: list[dict]) -> dict[str, str]:
+    previous = _latest_team_names(polls)
+    labels = {}
+    for channel in channels:
+        channel_name = directory["channels"].get(channel, "")
+        labels[channel] = (
+            team_name_from_channel(channel_name)
+            or previous.get(channel)
+            or (f"#{channel_name}" if channel_name else channel)
+        )
+    return labels
 
 
 async def _collect() -> list[dict]:
@@ -138,15 +197,11 @@ def _poll_dialog(polls: list[dict], directory: dict, csrf: str) -> str:
         )
     except PollError as error:
         session_note = f"<b>{escape(str(error))}</b>"
-    names = _latest_team_names(polls)
+    labels = _team_labels(channels, directory, polls)
     posted = _posted_channels(polls, meeting_date)
-    teams = "".join(
-        '<div class="filters">'
-        f"<span>{channel_cell(directory, channel)}"
-        f"{' · 이미 올림' if channel in posted else ''}</span>"
-        f'<input aria-label="팀 이름" type="text" name="team_name_{escape(channel)}" '
-        f'value="{escape(names.get(channel, ""))}" placeholder="팀 이름" '
-        f'maxlength="{TEAM_NAME_MAX}" required></div>'
+    targets = "".join(
+        f"<li><b>{escape(labels[channel])}</b> · {channel_cell(directory, channel)}"
+        f"{' · 이미 올림' if channel in posted else ''}</li>"
         for channel in channels
     )
     return f"""<div class="toolbar">
@@ -154,13 +209,14 @@ def _poll_dialog(polls: list[dict], directory: dict, csrf: str) -> str:
 </div>
 <dialog id="poll-dialog" aria-labelledby="poll-title">
 <div class="dialog-head"><h2 id="poll-title">시간 투표 올리기</h2><form method="dialog"><button aria-label="닫기">✕</button></form></div>
-<small>팀 채널마다 {POLL_WINDOW} 사이 1시간 단위 시간 투표를 올립니다. 팀원은 자기 팀 투표에만 참여하고, 결과는 이 화면에서 팀별로 확정합니다.
-날짜는 다음 둘째 일요일이 기본입니다. {session_note}
-같은 날짜로 다시 눌러도 이미 올린 팀에는 다시 올리지 않습니다.</small>
+<small>팀 채널마다 {POLL_WINDOW} 사이 1시간 단위 시간 투표를 올립니다. 날짜는 다음 둘째 일요일이 기본입니다.
+{session_note} 같은 날짜로 다시 눌러도 이미 올린 팀에는 다시 올리지 않습니다.</small>
 <form method="post" action="{PAGE_PATH}/polls">
 <input type="hidden" name="csrf_token" value="{escape(csrf)}">
 <div class="filters"><input aria-label="모임 날짜" type="date" name="meeting_date" value="{meeting_date}" min="{today.isoformat()}" required></div>
-{teams}
+<div class="field"><small>공지 문구 · <code>{{팀}}</code>은 팀 이름으로, <code>{{날짜}}</code>는 모임 날짜({escape(meeting_day(meeting_date))})로 바뀝니다. 비우면 기본 문구를 씁니다.</small>
+<textarea aria-label="투표 공지 문구" name="intro" rows="4" maxlength="{MAX_POLL_INTRO_LENGTH}">{escape(_latest_intro(polls))}</textarea></div>
+<div class="field"><small>올릴 팀 · 팀 이름은 채널 이름에서 정합니다.</small><ul class="retro-targets">{targets}</ul></div>
 <div class="filters"><button type="submit" class="primary">팀 채널에 투표 올리기</button></div>
 </form>
 </dialog>"""
@@ -176,70 +232,48 @@ def _status_pill(confirmation: dict | None) -> str:
     return f'<span class="pill {css}">{escape(STATUS_LABELS.get(status, status))}</span>'
 
 
-def _vote_table(poll: dict) -> str:
-    top = max(poll["counts"].values(), default=0)
+def _top_count(poll: dict) -> int:
+    return max(poll["counts"].get(slot, 0) for slot in TIME_SLOTS)
+
+
+def _votes(poll: dict) -> str:
+    """시간대별 득표를 한 줄씩. 가장 많이 고른 시간은 강조한다."""
+    scale = max(poll["counts"].values(), default=0)
+    top = _top_count(poll)
     cells = []
     for slot in poll["slots"]:
         count = poll["counts"].get(slot, 0)
-        width = int(160 * count / top) if top else 0
-        best = ' class="done"' if count and count == top else ""
+        css = ' class="top"' if slot != UNAVAILABLE and top and count == top else ""
+        width = round(100 * count / scale) if scale else 0
         cells.append(
-            "<tr>"
-            f"<td{best}>{escape(slot)}</td>"
-            f"<td{best}>{count}명</td>"
-            f'<td class="bar"><span style="width:{width}px"></span></td>'
-            "</tr>"
+            f"<span{css}>{escape(UNAVAILABLE_LABEL if slot == UNAVAILABLE else slot)}</span>"
+            f'<span class="bar"><span style="width:{width}%"></span></span>'
+            f"<span{css}>{count}명</span>"
         )
-    return (
-        "<table><thead><tr><th>시간</th><th>득표</th><th></th></tr></thead>"
-        f"<tbody>{rows(cells, 3, '아직 투표가 없습니다.')}</tbody></table>"
-    )
+    return f'<div class="votes">{"".join(cells)}</div>'
 
 
-def _confirmation_table(confirmation: dict) -> str:
-    starts_at = datetime.datetime.fromisoformat(confirmation["starts_at"])
-    ends_at = datetime.datetime.fromisoformat(confirmation["ends_at"])
-    meet_url = confirmation["meet_url"] or ""
-    meet_cell = (
-        f'<a href="{escape(meet_url)}" rel="noreferrer noopener" target="_blank">'
-        f"{escape(meet_url)}</a>"
-        if meet_url
-        else "-"
-    )
-    access = confirmation["meet_access_type"] or "기본값 유지"
-    error = ""
-    if confirmation["last_error"]:
-        error = (
-            '<tr><th>마지막 오류</th>'
-            f'<td class="error">{escape(confirmation["last_error"])}</td></tr>'
-        )
-    return f"""<table><tbody>
-<tr><th>확정 시간</th><td>{escape(format_meeting_time(starts_at, ends_at))}</td></tr>
-<tr><th>Meet 링크</th><td>{meet_cell}</td></tr>
-<tr><th>Calendar 이벤트</th><td><code>{escape(confirmation['calendar_event_id'])}</code></td></tr>
-<tr><th>입장 정책</th><td>{escape(str(access))}</td></tr>
-<tr><th>갱신</th><td>{escape(to_kst(confirmation['updated_at']))} (KST)</td></tr>
-{error}
-</tbody></table>"""
-
-
-def _confirm_form(poll: dict, confirmation: dict | None, csrf: str) -> str:
-    selected = confirmation["slot"] if confirmation else ""
+def _confirm_controls(poll: dict, confirmation: dict | None, csrf: str) -> str:
+    # 확정 전에는 가장 많이 고른 시간을 미리 골라 둔다. 동률이면 이른 시간.
+    top = _top_count(poll)
+    best = next((slot for slot in TIME_SLOTS if top and poll["counts"].get(slot) == top), "")
+    selected = (confirmation or {}).get("slot") or best
     options = "".join(
         f'<option value="{escape(slot)}"{" selected" if slot == selected else ""}>'
         f"{escape(slot)}</option>"
         for slot in TIME_SLOTS
     )
-    label = "시간 변경 및 Meet 갱신" if confirmation else "시간 확정 및 Meet 생성"
+    confirmed = bool(confirmation and confirmation["status"] == "confirmed")
+    label = "시간 변경 및 Meet 갱신" if confirmed else "시간 확정 및 Meet 생성"
     cancel = ""
-    if confirmation and confirmation["status"] == "confirmed":
+    if confirmed:
         cancel = (
-            f'<form class="filters" method="post" action="{PAGE_PATH}/{poll["id"]}/cancel">'
+            f'<form class="inline" method="post" action="{PAGE_PATH}/{poll["id"]}/cancel">'
             f'<input type="hidden" name="csrf_token" value="{escape(csrf)}">'
-            '<button type="submit">확정 취소</button></form>'
+            '<button type="submit" class="danger">확정 취소</button></form>'
         )
     return (
-        f'<form class="filters" method="post" action="{PAGE_PATH}/{poll["id"]}/confirm">'
+        f'<form method="post" action="{PAGE_PATH}/{poll["id"]}/confirm">'
         f'<input type="hidden" name="csrf_token" value="{escape(csrf)}">'
         f'<select name="slot" aria-label="확정할 시간">{options}</select>'
         f'<button type="submit">{escape(label)}</button>'
@@ -247,18 +281,86 @@ def _confirm_form(poll: dict, confirmation: dict | None, csrf: str) -> str:
     )
 
 
-def _poll_section(poll: dict, directory: dict, csrf: str) -> str:
+def _confirmation_detail(confirmation: dict | None) -> str:
+    if confirmation is None:
+        return ""
+    starts_at = datetime.datetime.fromisoformat(confirmation["starts_at"])
+    ends_at = datetime.datetime.fromisoformat(confirmation["ends_at"])
+    meet_url = confirmation["meet_url"] or ""
+    link = (
+        f' · <a href="{escape(meet_url)}" rel="noreferrer noopener" target="_blank">Meet 열기</a>'
+        if meet_url
+        else ""
+    )
+    access = confirmation["meet_access_type"] or "기본값 유지"
+    error = (
+        f'<div class="error">{escape(confirmation["last_error"])}</div>'
+        if confirmation["last_error"]
+        else ""
+    )
+    return (
+        f'<div class="meta"><b>{escape(format_meeting_time(starts_at, ends_at))}</b>{link}<br>'
+        f"입장 정책 {escape(str(access))} · 갱신 {escape(to_kst(confirmation['updated_at']))} KST<br>"
+        f"이벤트 <code>{escape(confirmation['calendar_event_id'])}</code></div>{error}"
+    )
+
+
+def _team_card(poll: dict, directory: dict, csrf: str) -> str:
     confirmation = poll["confirmation"]
-    test_mark = " 🧪 테스트" if poll["is_test"] else ""
-    detail = _confirmation_table(confirmation) if confirmation else ""
-    return f"""<section>
-<h2>{escape(poll['team_name'])}{test_mark} · {escape(poll['meeting_date'])} {_status_pill(confirmation)}</h2>
-<p><small>{channel_cell(directory, poll['team_channel'])} · {escape(poll['session_name'])}
-· 투표 {poll['voters']}명</small></p>
-{_vote_table(poll)}
-{_confirm_form(poll, confirmation, csrf)}
-{detail}
-</section>"""
+    size = 0 if poll["is_test"] else _team_size(poll["team_channel"])
+    responded = (
+        f"팀원 {size}명 중 {poll['voters']}명 응답" if size else f"{poll['voters']}명 응답"
+    )
+    return f"""<article class="retro-team">
+<h3>{escape(poll['team_name'])} {_status_pill(confirmation)}</h3>
+<div class="meta">{channel_cell(directory, poll['team_channel'])} · {responded}</div>
+{_votes(poll)}
+{_confirm_controls(poll, confirmation, csrf)}
+{_confirmation_detail(confirmation)}
+</article>"""
+
+
+def _date_block(polls: list[dict], directory: dict, csrf: str) -> str:
+    """모임 하루치. 팀 카드를 나란히 놓아 한눈에 비교한다."""
+    first = polls[0]
+    confirmed = sum(
+        1
+        for poll in polls
+        if poll["confirmation"] and poll["confirmation"]["status"] == "confirmed"
+    )
+    test_mark = " 🧪 테스트" if first["is_test"] else ""
+    cards = "".join(_team_card(poll, directory, csrf) for poll in polls)
+    return (
+        f'<h2 class="retro-date">{escape(meeting_day(first["meeting_date"]))} · '
+        f'{escape(first["session_name"])}{test_mark}'
+        f"<small>확정 {confirmed}/{len(polls)}팀</small></h2>"
+        f'<div class="retro-teams">{cards}</div>'
+    )
+
+
+def _poll_sections(polls: list[dict], directory: dict, csrf: str) -> str:
+    """다가오는 모임은 펼치고, 지난 모임과 테스트 투표는 접어 둔다."""
+    if not polls:
+        return "<p>아직 생성된 시간 투표가 없습니다.</p>"
+    today = tz_now().date().isoformat()
+    groups: dict[tuple[str, bool], list[dict]] = {}
+    for poll in polls:
+        groups.setdefault((poll["meeting_date"], bool(poll["is_test"])), []).append(poll)
+    upcoming = sorted(key for key in groups if not key[1] and key[0] >= today)
+    past = sorted((key for key in groups if not key[1] and key[0] < today), reverse=True)
+    tests = sorted((key for key in groups if key[1]), reverse=True)
+
+    html = "".join(
+        f"<section>{_date_block(groups[key], directory, csrf)}</section>" for key in upcoming
+    )
+    if not upcoming:
+        html = "<p>다가오는 모임의 시간 투표가 없습니다. <b>투표 올리기</b>로 팀 채널에 투표를 올리세요.</p>"
+    for title, keys in (("지난 투표", past), ("테스트 투표", tests)):
+        if keys:
+            count = sum(len(groups[key]) for key in keys)
+            inner = "".join(_date_block(groups[key], directory, csrf) for key in keys)
+            html += f'<details class="section"><summary>{title} {count}건</summary>{inner}</details>'
+    return html
 
 
 def _notice(request: web.Request) -> str:
@@ -282,13 +384,17 @@ def _google_state() -> str:
             '<div class="warn">Google 인증정보가 없어 Meet 링크를 만들 수 없습니다. '
             "운영 <code>.env</code>의 <code>GOOGLE_OAUTH_*</code> 값을 먼저 설정하세요.</div>"
         )
-    if not settings.GOOGLE_MEET_ACCESS_TYPE:
-        return (
-            '<div class="warn">시간을 확정하면 팀원 Slack 프로필의 Gmail 주소를 Calendar 참석자로 '
-            "자동 초대합니다. 초대받은 팀원은 운영자가 없어도 노크 없이 Meet에 들어옵니다. "
-            "Gmail이 아닌 Google 계정은 <code>ONLINE_RETRO_TEAM_ATTENDEES</code>에 추가하세요.</div>"
-        )
     return ""
+
+
+def _invite_note() -> str:
+    if settings.GOOGLE_MEET_ACCESS_TYPE:
+        return ""
+    return (
+        "<p><small>시간을 확정하면 팀원 Slack 프로필의 Gmail 주소를 Calendar 참석자로 "
+        "자동 초대합니다. 초대받은 팀원은 운영자가 없어도 노크 없이 Meet에 들어옵니다. "
+        "Gmail이 아닌 Google 계정은 <code>ONLINE_RETRO_TEAM_ATTENDEES</code>에 추가하세요.</small></p>"
+    )
 
 
 @require_admin
@@ -298,12 +404,9 @@ async def handle(request: web.Request) -> web.Response:
         request, {poll["team_channel"] for poll in polls} | set(_team_channels())
     )
     csrf = csrf_token(request)
-    sections = "".join(_poll_section(poll, directory, csrf) for poll in polls)
-    if not sections:
-        sections = "<p>아직 생성된 시간 투표가 없습니다.</p>"
     body = (
         f"{_notice(request)}{_google_state()}{_poll_dialog(polls, directory, csrf)}"
-        f"{sections}{DIALOG_SCRIPT}"
+        f"{_poll_sections(polls, directory, csrf)}{_invite_note()}{DIALOG_SCRIPT}"
     )
     return web.Response(
         text=layout.render(
@@ -344,16 +447,12 @@ def _parse_meeting_date(raw: str) -> datetime.date:
     return meeting_date
 
 
-def _team_names(form, channels: list[str]) -> dict[str, str]:
-    names = {}
-    for channel in channels:
-        name = str(form.get(f"team_name_{channel}", "")).strip()
-        if not name:
-            raise PollError("팀 이름을 모두 입력해 주세요.")
-        if len(name) > TEAM_NAME_MAX:
-            raise PollError(f"팀 이름은 {TEAM_NAME_MAX}자 이내로 입력해 주세요.")
-        names[channel] = name
-    return names
+def _parse_intro(raw: str) -> str | None:
+    """비우거나 기본 문구 그대로면 None으로 남겨 기본 문구를 따라가게 한다."""
+    intro = raw.replace("\r\n", "\n").strip()
+    if len(intro) > MAX_POLL_INTRO_LENGTH:
+        raise PollError(f"공지 문구는 {MAX_POLL_INTRO_LENGTH}자까지 쓸 수 있어요.")
+    return None if not intro or intro == DEFAULT_POLL_INTRO else intro
 
 
 @require_admin
@@ -365,7 +464,7 @@ async def handle_post_polls(request: web.Request) -> web.StreamResponse:
             raise PollError("SUBMISSION_TEAMS에 팀 채널이 없어 투표를 올릴 곳이 없어요.")
         meeting_date = _parse_meeting_date(str(form.get("meeting_date", "")))
         session_name = session_for_meeting(meeting_date.isoformat())
-        team_names = _team_names(form, channels)
+        intro = _parse_intro(str(form.get("intro", "")))
     except PollError as error:
         raise _redirect(error=str(error))
 
@@ -373,10 +472,12 @@ async def handle_post_polls(request: web.Request) -> web.StreamResponse:
     if client is None:
         raise _redirect(error="Slack 클라이언트를 사용할 수 없습니다.")
 
-    already = _posted_channels(await list_polls(), meeting_date.isoformat())
+    polls = await list_polls()
+    labels = _team_labels(channels, await get_directory(request, set(channels)), polls)
+    already = _posted_channels(polls, meeting_date.isoformat())
     posted, skipped, failed = [], [], []
     for channel in channels:
-        name = team_names[channel]
+        name = labels[channel]
         if channel in already:
             skipped.append(name)
             continue
@@ -387,6 +488,7 @@ async def handle_post_polls(request: web.Request) -> web.StreamResponse:
                 team_name=name,
                 meeting_date=meeting_date,
                 session_name=session_name,
+                intro_template=intro,
             )
         except Exception as error:  # 한 팀이 실패해도 나머지 팀에는 올린다.
             logger.exception("온라인 회고 시간 투표를 올리지 못했습니다 - team_channel={}", channel)
