@@ -12,17 +12,19 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from slack_sdk.errors import SlackApiError
 
 from config import GoogleCredentials, settings
 from dashboard import auth, register_dashboard_routes
 from dashboard import directory as slack_directory
+from dashboard.online_retro import second_sunday_after
 from database.online_retro_confirmation import get_confirmation, list_confirmed
-from database.online_retro_poll import create_poll, get_poll, save_vote
+from database.online_retro_poll import create_poll, get_poll, list_polls, save_vote
 from database.sqlite import get_connection, initialize_database
 from google_workspace import calendar_meet
 from google_workspace.calendar_meet import (
@@ -182,6 +184,19 @@ class ConfirmationTestCase(unittest.IsolatedAsyncioTestCase):
         )
         await save_vote(poll_id=poll["id"], user_id="U11111111", slots=["20:00~21:00"])
         return await get_poll(poll["id"])
+
+
+class SecondSundayTest(unittest.TestCase):
+    def test_next_meeting_is_the_coming_second_sunday(self):
+        cases = {
+            datetime.date(2026, 10, 5): datetime.date(2026, 10, 11),
+            datetime.date(2026, 10, 11): datetime.date(2026, 11, 8),
+            datetime.date(2026, 12, 20): datetime.date(2027, 1, 10),
+            datetime.date(2026, 2, 28): datetime.date(2026, 3, 8),
+        }
+        for today, expected in cases.items():
+            with self.subTest(today=today):
+                self.assertEqual(second_sunday_after(today), expected)
 
 
 class SlotRangeTest(unittest.TestCase):
@@ -611,6 +626,13 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
                 calendar_meet, "get_access_token", AsyncMock(return_value="test-token")
             )
         )
+        self.enterContext(patch.object(settings, "SESSION_NAME_OVERRIDE", ""))
+        self.enterContext(
+            patch(
+                "dashboard.online_retro.tz_now",
+                return_value=datetime.datetime(2026, 10, 5, 21, 0, tzinfo=KST),
+            )
+        )
         slack_directory.reset_cache()
         initialize_database()
         auth.create_admin("admin", "test-password-long")
@@ -737,6 +759,120 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
                 await self.client.get("/online-retro", headers=self._headers())
             ).text()
         self.assertIn("Google 인증정보가 없어", body)
+
+    def _teams(self):
+        return patch.object(
+            settings,
+            "SUBMISSION_DESTINATIONS",
+            {"U22222222": "C22222222", "U33333333": "C33333333", "U44444444": "C33333333"},
+        )
+
+    async def _post_polls(self, **fields: str):
+        data = {
+            "csrf_token": self._csrf(),
+            "meeting_date": "2026-10-11",
+            "team_name_C22222222": "블루팀",
+            "team_name_C33333333": "옐로우팀",
+            **fields,
+        }
+        return await self.client.post(
+            "/online-retro/polls", data=data, headers=self._headers(), allow_redirects=False
+        )
+
+    def _posted_channels(self) -> list[str]:
+        return [call.kwargs["channel"] for call in self.slack.chat_postMessage.await_args_list]
+
+    async def _new_polls(self) -> dict[str, dict]:
+        # setUp에서 만든 C11111111 투표는 팀 배정 밖이라 이 테스트들과 무관하다.
+        return {
+            poll["team_channel"]: poll
+            for poll in await list_polls()
+            if poll["team_channel"] != "C11111111"
+        }
+
+    async def test_page_offers_poll_for_the_next_second_sunday(self):
+        with self._teams():
+            body = await (await self.client.get("/online-retro", headers=self._headers())).text()
+        self.assertIn('data-dialog="poll-dialog"', body)
+        self.assertIn('value="2026-10-11"', body)
+        self.assertIn("6기 5회차", body)
+        self.assertIn('name="team_name_C22222222"', body)
+        self.assertIn('name="team_name_C33333333"', body)
+
+    async def test_poll_goes_to_every_team_with_the_open_session(self):
+        with self._teams():
+            response = await self._post_polls()
+        self.assertEqual(response.status, 302)
+        location = unquote(response.headers["Location"])
+        self.assertIn("polls=", location)
+        self.assertIn("6기 5회차", location)
+        self.assertEqual(self._posted_channels(), ["C22222222", "C33333333"])
+        polls = await self._new_polls()
+        self.assertEqual(polls["C22222222"]["team_name"], "블루팀")
+        self.assertEqual(polls["C33333333"]["team_name"], "옐로우팀")
+        for poll in polls.values():
+            self.assertEqual(poll["meeting_date"], "2026-10-11")
+            self.assertEqual(poll["session_name"], "6기 5회차")
+            self.assertFalse(poll["is_test"])
+            self.assertTrue(poll["slack_ts"])
+
+    async def test_second_press_does_not_post_again(self):
+        with self._teams():
+            await self._post_polls()
+            response = await self._post_polls()
+            body = await (await self.client.get("/online-retro", headers=self._headers())).text()
+        self.assertEqual(self._posted_channels(), ["C22222222", "C33333333"])
+        self.assertIn("건너뛰었습니다", unquote(response.headers["Location"]))
+        self.assertIn("이미 올림", body)
+        self.assertIn('value="블루팀"', body)
+
+    async def test_failed_team_is_retried_alone(self):
+        self.slack.chat_postMessage.side_effect = [
+            SlackApiError("not_in_channel", {"ok": False, "error": "not_in_channel"}),
+            {"ts": "1700000000.0002"},
+        ]
+        with self._teams():
+            response = await self._post_polls()
+            location = unquote(response.headers["Location"])
+            self.assertIn("error=", location)
+            self.assertIn("블루팀(not_in_channel)", location)
+            self.assertIn("옐로우팀", location)
+
+            self.slack.chat_postMessage.side_effect = None
+            self.slack.chat_postMessage.return_value = {"ts": "1700000000.0003"}
+            response = await self._post_polls()
+        self.assertIn("polls=", unquote(response.headers["Location"]))
+        self.assertEqual(self._posted_channels(), ["C22222222", "C33333333", "C22222222"])
+        polls = await self._new_polls()
+        self.assertEqual(polls["C22222222"]["slack_ts"], "1700000000.0003")
+        self.assertEqual(polls["C33333333"]["slack_ts"], "1700000000.0002")
+
+    async def test_dates_without_an_open_session_post_nothing(self):
+        cases = {
+            "2026-10-04": "지난 날짜",
+            "2027-06-13": "열려 있는 회차가 없어요",
+            "not-a-date": "날짜 형식",
+        }
+        with self._teams():
+            for meeting_date, message in cases.items():
+                with self.subTest(meeting_date=meeting_date):
+                    response = await self._post_polls(meeting_date=meeting_date)
+                    self.assertIn(message, unquote(response.headers["Location"]))
+        self.slack.chat_postMessage.assert_not_awaited()
+        self.assertEqual(await self._new_polls(), {})
+
+    async def test_poll_needs_every_team_name(self):
+        with self._teams():
+            response = await self._post_polls(team_name_C33333333="  ")
+        self.assertIn("팀 이름을 모두 입력해 주세요", unquote(response.headers["Location"]))
+        self.slack.chat_postMessage.assert_not_awaited()
+        self.assertEqual(await self._new_polls(), {})
+
+    async def test_poll_requires_csrf_token(self):
+        with self._teams():
+            response = await self._post_polls(csrf_token="")
+        self.assertEqual(response.status, 403)
+        self.slack.chat_postMessage.assert_not_awaited()
 
 
 if __name__ == "__main__":

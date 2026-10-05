@@ -30,9 +30,7 @@ from google_workspace.calendar_meet import (
     ensure_meet_event,
 )
 from google_workspace.oauth import GoogleAuthError
-from slack.events.online_retro_poll import TIME_SLOTS
-
-WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
+from slack.events.online_retro_poll import TIME_SLOTS, WEEKDAYS
 
 
 class ConfirmationError(RuntimeError):

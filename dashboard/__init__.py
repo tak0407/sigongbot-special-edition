@@ -63,6 +63,7 @@ def register_dashboard_routes(app: web.Application, slack_client=None) -> None:
         "/suggestions/{suggestion_id}/status", suggestions.handle_status_update
     )
     app.router.add_get("/online-retro", online_retro.handle)
+    app.router.add_post("/online-retro/polls", online_retro.handle_post_polls)
     app.router.add_post("/online-retro/{poll_id}/confirm", online_retro.handle_confirm)
     app.router.add_post("/online-retro/{poll_id}/cancel", online_retro.handle_cancel)
 

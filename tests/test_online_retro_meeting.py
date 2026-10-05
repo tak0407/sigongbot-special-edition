@@ -22,6 +22,9 @@ from slack.events.online_retro_meeting import (
     post_writing_time_up,
 )
 from slack.events.online_retro_poll import (
+    UNAVAILABLE,
+    build_poll_blocks,
+    handle_mark_unavailable,
     handle_open_time_poll,
     handle_time_poll_submit,
     post_team_time_poll,
@@ -331,6 +334,120 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
         )
         self.client.views_open.assert_not_awaited()
         self.assertIn("자신이 배정된 팀", self.client.chat_postEphemeral.await_args.kwargs["text"])
+
+    async def _post_poll(self) -> dict:
+        return await post_team_time_poll(
+            self.client,
+            channel="C11111111",
+            team_name="그린팀",
+            meeting_date=datetime.date(2026, 10, 11),
+            session_name="6기 5회차",
+        )
+
+    def _action(self, poll: dict, user_id: str = "U11111111") -> dict:
+        return {
+            "actions": [{"value": str(poll["id"])}],
+            "trigger_id": "trigger-1",
+            "user": {"id": user_id},
+            "channel": {"id": "C11111111"},
+        }
+
+    async def _vote(self, poll: dict, slots: list[str]) -> None:
+        await handle_open_time_poll(AsyncMock(), self._action(poll), self.client)
+        modal = self.client.views_open.await_args.kwargs["view"]
+        modal["state"] = {
+            "values": {
+                "available_slots": {
+                    "available_slots_input": {
+                        "selected_options": [{"value": slot} for slot in slots]
+                    }
+                }
+            }
+        }
+        await handle_time_poll_submit(
+            AsyncMock(), {"user": {"id": "U11111111"}}, self.client, modal
+        )
+
+    async def test_modal_shows_checkboxes_with_the_previous_choice_checked(self):
+        poll = await self._post_poll()
+        await handle_open_time_poll(AsyncMock(), self._action(poll), self.client)
+        element = self.client.views_open.await_args.kwargs["view"]["blocks"][0]["element"]
+        self.assertEqual(element["type"], "checkboxes")
+        self.assertNotIn(UNAVAILABLE, [option["value"] for option in element["options"]])
+        self.assertNotIn("initial_options", element)
+
+        await self._vote(poll, ["19:00~20:00", "21:00~22:00"])
+        await handle_open_time_poll(AsyncMock(), self._action(poll), self.client)
+        element = self.client.views_open.await_args.kwargs["view"]["blocks"][0]["element"]
+        self.assertEqual(
+            [option["value"] for option in element["initial_options"]],
+            ["19:00~20:00", "21:00~22:00"],
+        )
+
+    async def test_empty_choice_points_to_the_unavailable_button(self):
+        poll = await self._post_poll()
+        ack = AsyncMock()
+        await handle_open_time_poll(AsyncMock(), self._action(poll), self.client)
+        modal = self.client.views_open.await_args.kwargs["view"]
+        modal["state"] = {
+            "values": {"available_slots": {"available_slots_input": {"selected_options": []}}}
+        }
+        await handle_time_poll_submit(ack, {"user": {"id": "U11111111"}}, self.client, modal)
+        self.assertEqual(ack.await_args.kwargs["response_action"], "errors")
+        self.assertIn("이번엔 어려워요", ack.await_args.kwargs["errors"]["available_slots"])
+        with get_connection() as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM online_retro_time_votes").fetchone()[0],
+                0,
+            )
+
+    async def test_unavailable_button_answers_without_a_modal(self):
+        poll = await self._post_poll()
+        await self._vote(poll, ["19:00~20:00"])
+        await handle_mark_unavailable(AsyncMock(), self._action(poll), self.client)
+
+        self.assertEqual(self.client.views_open.await_count, 1)
+        lines = self.client.chat_update.await_args.kwargs["blocks"][1]["text"]["text"]
+        self.assertIn("이번엔 어려워요 · *1명*", lines)
+        self.assertIn("19:00~20:00 · *0명*", lines)
+        with get_connection() as connection:
+            stored = connection.execute(
+                "SELECT slots_json FROM online_retro_time_votes WHERE user_id = 'U11111111'"
+            ).fetchone()[0]
+        self.assertEqual(json.loads(stored), [UNAVAILABLE])
+        self.assertIn("이번엔 어렵다고", self.client.chat_postEphemeral.await_args.kwargs["text"])
+
+    async def test_unavailable_button_rejects_other_team_member(self):
+        poll = await self._post_poll()
+        await handle_mark_unavailable(AsyncMock(), self._action(poll, "U22222222"), self.client)
+        self.client.chat_update.assert_not_awaited()
+        self.assertIn("자신이 배정된 팀", self.client.chat_postEphemeral.await_args.kwargs["text"])
+
+    def test_message_shows_counts_top_slot_and_team_response(self):
+        poll = {
+            "id": 1,
+            "team_name": "그린팀",
+            "team_channel": "C11111111",
+            "meeting_date": "2026-10-11",
+            "is_test": 0,
+        }
+        counts = {"19:00~20:00": 1, "20:00~21:00": 2, UNAVAILABLE: 1}
+        with patch.object(
+            settings,
+            "SUBMISSION_DESTINATIONS",
+            {"U1": "C11111111", "U2": "C11111111", "U3": "C11111111", "U4": "C22222222"},
+        ):
+            blocks = build_poll_blocks(poll, counts, 3)
+        self.assertIn("10월 11일(일)", blocks[0]["text"]["text"])
+        lines = blocks[1]["text"]["text"]
+        self.assertIn("20:00~21:00 · *2명* ⭐", lines)
+        self.assertNotIn("19:00~20:00 · *1명* ⭐", lines)
+        self.assertNotIn("<@", lines)
+        self.assertIn("팀원 3명 중 3명 응답", blocks[3]["elements"][0]["text"])
+
+        empty = build_poll_blocks({**poll, "is_test": 1}, {}, 0)
+        self.assertNotIn("⭐", empty[1]["text"]["text"])
+        self.assertIn("0명 응답", empty[3]["elements"][0]["text"])
 
 
 if __name__ == "__main__":

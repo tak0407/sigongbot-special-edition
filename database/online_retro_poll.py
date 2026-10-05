@@ -88,6 +88,20 @@ async def save_vote(*, poll_id: int, user_id: str, slots: list[str]) -> None:
     await asyncio.to_thread(upsert)
 
 
+async def get_vote(poll_id: int, user_id: str) -> list[str]:
+    """사용자의 이전 선택. 투표 창을 다시 열 때 미리 체크해 둔다."""
+
+    def select() -> list[str]:
+        with get_connection() as connection:
+            row = connection.execute(
+                "SELECT slots_json FROM online_retro_time_votes WHERE poll_id = ? AND user_id = ?",
+                (poll_id, user_id),
+            ).fetchone()
+        return json.loads(row[0]) if row else []
+
+    return await asyncio.to_thread(select)
+
+
 async def vote_counts(poll_id: int, slots: list[str]) -> tuple[dict[str, int], int]:
     def select() -> tuple[dict[str, int], int]:
         with get_connection() as connection:
