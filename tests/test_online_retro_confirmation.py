@@ -72,6 +72,11 @@ class FakeGoogle:
     def counts(self, method: str) -> int:
         return sum(1 for call_method, _ in self.calls if call_method == method)
 
+    def inserted(self) -> dict:
+        return next(
+            body for (method, _), body in zip(self.calls, self.bodies) if method == "POST"
+        )
+
     def _new_meet_url(self) -> str:
         self._next_code += 1
         return f"https://meet.google.com/abc-defg-h{self._next_code:02d}"
@@ -422,6 +427,79 @@ class ConfirmMeetingTest(ConfirmationTestCase):
         )
         self.assertEqual(insert_body["attendees"], [{"email": "member@example.com"}])
 
+    async def test_team_gmail_members_are_invited_with_the_guest_list_hidden(self):
+        poll = await self.make_poll()
+        profiles = {
+            "U11111111": "Green.One@Gmail.com",
+            "U22222222": "green.two@naver.com",
+            "U33333333": "green3@googlemail.com",
+            "U44444444": "blue@gmail.com",
+        }
+        self.slack.users_info = AsyncMock(
+            side_effect=lambda user: {"user": {"profile": {"email": profiles[user]}}}
+        )
+        with patch.object(
+            settings,
+            "SUBMISSION_DESTINATIONS",
+            {
+                "U11111111": "C11111111",
+                "U22222222": "C11111111",
+                "U33333333": "C11111111",
+                "U44444444": "C22222222",
+            },
+        ), patch.object(
+            settings,
+            "ONLINE_RETRO_TEAM_ATTENDEES",
+            {"C11111111": ["green.one@gmail.com", "Outside@Company.com"]},
+        ):
+            _, warning = await confirm_meeting_time(self.slack, poll=poll, slot="20:00~21:00")
+
+        inserted = self.google.inserted()
+        self.assertEqual(
+            [attendee["email"] for attendee in inserted["attendees"]],
+            ["green.one@gmail.com", "green3@googlemail.com", "outside@company.com"],
+        )
+        self.assertFalse(inserted["guestsCanSeeOtherGuests"])
+        self.assertEqual(
+            sorted(call.kwargs["user"] for call in self.slack.users_info.await_args_list),
+            ["U11111111", "U22222222", "U33333333"],
+        )
+        self.assertEqual(warning, "")
+
+    async def test_unreadable_profile_is_left_out(self):
+        poll = await self.make_poll()
+
+        def profile(user):
+            if user == "U22222222":
+                raise SlackApiError("user_not_found", {"ok": False, "error": "user_not_found"})
+            return {"user": {"profile": {"email": "green@gmail.com"}}}
+
+        self.slack.users_info = AsyncMock(side_effect=profile)
+        with patch.object(
+            settings,
+            "SUBMISSION_DESTINATIONS",
+            {"U11111111": "C11111111", "U22222222": "C11111111"},
+        ):
+            await confirm_meeting_time(self.slack, poll=poll, slot="20:00~21:00")
+        self.assertEqual(self.google.inserted()["attendees"], [{"email": "green@gmail.com"}])
+
+    async def test_no_attendees_leaves_a_warning_unless_meet_is_open(self):
+        poll = await self.make_poll()
+        self.slack.users_info = AsyncMock(return_value={"user": {"profile": {}}})
+        with patch.object(
+            settings, "SUBMISSION_DESTINATIONS", {"U11111111": "C11111111"}
+        ), patch.object(settings, "GOOGLE_MEET_ACCESS_TYPE", ""):
+            confirmation, warning = await confirm_meeting_time(
+                self.slack, poll=poll, slot="20:00~21:00"
+            )
+        self.assertEqual(confirmation["status"], "confirmed")
+        self.assertNotIn("attendees", self.google.inserted())
+        self.assertIn("users:read.email", warning)
+
+        # 링크만으로 들어오는 OPEN이면 초대가 없어도 경고하지 않는다.
+        _, warning = await confirm_meeting_time(self.slack, poll=poll, slot="21:00~22:00")
+        self.assertEqual(warning, "")
+
 
 class ConfirmFailureTest(ConfirmationTestCase):
     async def test_missing_credentials_stops_before_touching_google(self):
@@ -482,7 +560,9 @@ class ConfirmFailureTest(ConfirmationTestCase):
 
     async def test_access_type_is_left_alone_when_not_configured(self):
         poll = await self.make_poll()
-        with patch.object(settings, "GOOGLE_MEET_ACCESS_TYPE", ""):
+        with patch.object(settings, "GOOGLE_MEET_ACCESS_TYPE", ""), patch.object(
+            settings, "ONLINE_RETRO_TEAM_ATTENDEES", {"C11111111": ["member@gmail.com"]}
+        ):
             confirmation, warning = await confirm_meeting_time(
                 self.slack, poll=poll, slot="20:00~21:00"
             )
@@ -759,6 +839,20 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
                 await self.client.get("/online-retro", headers=self._headers())
             ).text()
         self.assertIn("Google 인증정보가 없어", body)
+
+    async def test_confirm_notice_keeps_the_attendee_warning(self):
+        with patch.object(settings, "GOOGLE_MEET_ACCESS_TYPE", ""):
+            response = await self.client.post(
+                f"/online-retro/{self.poll_id}/confirm",
+                data={"slot": "20:00~21:00", "csrf_token": self._csrf()},
+                headers=self._headers(),
+                allow_redirects=False,
+            )
+        body = await (
+            await self.client.get(response.headers["Location"], headers=self._headers())
+        ).text()
+        self.assertIn("시간을 확정하고 Google Meet 링크를 만들었습니다.", body)
+        self.assertIn("users:read.email", body)
 
     def _teams(self):
         return patch.object(

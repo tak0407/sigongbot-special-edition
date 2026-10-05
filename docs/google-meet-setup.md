@@ -180,16 +180,22 @@ Calendar가 만든 공간에 쓸 수 있다고 공지된 범위는 auto-artifact
 invited through a Google Calendar event, can join without knocking." 개인 계정은
 조직이 없으므로, **Calendar 참석자로 초대된 사람만 노크 없이 들어온다.**
 
-1. **`ONLINE_RETRO_TEAM_ATTENDEES`로 팀원을 Calendar 참석자로 초대** (권장)
-   팀 채널 ID별 이메일 목록을 JSON으로 준다. 한 번 설정하면 이후 확정마다
-   자동으로 초대된다. 실제 이메일은 운영 `.env`에만 둔다.
+1. **팀원을 Calendar 참석자로 초대** (기본 동작)
+   시간을 확정할 때 그 팀 `SUBMISSION_TEAMS` 멤버의 Slack 프로필 이메일을 읽어
+   `@gmail.com`·`@googlemail.com` 주소를 자동으로 초대한다. Slack 앱에
+   `users:read.email` 권한이 있어야 한다. 다른 도메인은 Google 계정인지 알 수
+   없어 자동으로 넣지 않으니, Google 계정이 확실한 주소만 팀 채널 ID별로 더한다.
+   실제 이메일은 운영 `.env`에만 둔다.
 
    ```bash
    ONLINE_RETRO_TEAM_ATTENDEES='{"C_REPLACE_ME":["member@example.com"]}'
    ```
 
+   팀원이 Meet에 들어올 때 초대받은 그 Gmail 계정으로 로그인돼 있어야 노크 없이
+   들어온다. 게스트 목록은 숨겨서 팀원끼리 서로의 이메일을 보지 못한다.
+
 2. **확정 후 캘린더에서 직접 `열림`으로 바꾸기**
-   이메일을 모으기 어려우면, 확정된 일정을 Google 캘린더에서 열어 Meet 액세스를
+   초대할 이메일이 없으면, 확정된 일정을 Google 캘린더에서 열어 Meet 액세스를
    `열림`으로 바꾼다. 링크만 있으면 누구나 들어온다. 팀당 회차마다 한 번 해야 한다.
 
 참석자 초대는 입장만 허용한다. 호스트 권한이 넘어가지는 않으므로 초대된 사람이

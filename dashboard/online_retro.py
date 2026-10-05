@@ -263,7 +263,10 @@ def _poll_section(poll: dict, directory: dict, csrf: str) -> str:
 
 def _notice(request: web.Request) -> str:
     if message := NOTICES.get(request.query.get("done", "")):
-        return f'<div class="warn">{escape(message)}</div>'
+        # 확정은 됐어도 참석자 초대나 입장 정책에 경고가 남을 수 있다.
+        warning = request.query.get("warning", "").strip()
+        detail = f"<div>{escape(warning[:300])}</div>" if warning else ""
+        return f'<div class="warn">{escape(message)}{detail}</div>'
     if summary := request.query.get("polls", "").strip():
         return f'<div class="warn">{escape(summary[:300])}</div>'
     if warning := request.query.get("warning", "").strip():
@@ -281,9 +284,9 @@ def _google_state() -> str:
         )
     if not settings.GOOGLE_MEET_ACCESS_TYPE:
         return (
-            '<div class="warn"><code>GOOGLE_MEET_ACCESS_TYPE</code>이 비어 있어 Meet 입장 정책을 '
-            "바꾸지 않습니다. 운영자가 없어도 팀원이 입장하게 하려면 <code>OPEN</code>으로 두거나, "
-            "<code>ONLINE_RETRO_TEAM_ATTENDEES</code>로 팀원을 Calendar 참석자로 초대하세요.</div>"
+            '<div class="warn">시간을 확정하면 팀원 Slack 프로필의 Gmail 주소를 Calendar 참석자로 '
+            "자동 초대합니다. 초대받은 팀원은 운영자가 없어도 노크 없이 Meet에 들어옵니다. "
+            "Gmail이 아닌 Google 계정은 <code>ONLINE_RETRO_TEAM_ATTENDEES</code>에 추가하세요.</div>"
         )
     return ""
 

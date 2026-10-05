@@ -207,6 +207,8 @@ def _event_body(
         "end": {"dateTime": ends_at.isoformat(), "timeZone": timezone},
         "status": "confirmed",
         "guestsCanModify": False,
+        # 참석자는 Slack 프로필에서 모은 팀원 이메일이다. 서로의 주소는 보이지 않게 한다.
+        "guestsCanSeeOtherGuests": False,
     }
     if attendees:
         body["attendees"] = [{"email": email} for email in attendees]

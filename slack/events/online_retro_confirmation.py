@@ -10,6 +10,7 @@ import json
 from zoneinfo import ZoneInfo
 
 from loguru import logger
+from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
 from config import settings
@@ -32,9 +33,49 @@ from google_workspace.calendar_meet import (
 from google_workspace.oauth import GoogleAuthError
 from slack.events.online_retro_poll import TIME_SLOTS, WEEKDAYS
 
+# 이 주소들만 Google 계정이 확실하다. 다른 도메인은 Google 계정인지 알 수 없어
+# ONLINE_RETRO_TEAM_ATTENDEES로만 받는다.
+GOOGLE_MAIL_DOMAINS = ("@gmail.com", "@googlemail.com")
+NO_ATTENDEES_WARNING = (
+    "Calendar에 초대할 팀원 Gmail을 찾지 못했어요. Slack 앱에 users:read.email 권한이 "
+    "있는지 확인하거나, 캘린더에서 Meet 액세스를 '열림'으로 바꿔 주세요. "
+    "초대받지 않은 팀원은 주최자가 승인해야 입장할 수 있어요."
+)
+
 
 class ConfirmationError(RuntimeError):
     """운영자에게 그대로 보여 줄 수 있는 확정 실패 사유."""
+
+
+async def _team_gmail_addresses(client: AsyncWebClient, team_channel: str) -> list[str]:
+    """팀원 Slack 프로필의 Gmail 주소. 초대받은 사람만 노크 없이 Meet에 들어온다."""
+    members = sorted(
+        user_id
+        for user_id, channel in settings.SUBMISSION_DESTINATIONS.items()
+        if channel == team_channel
+    )
+    addresses = []
+    for user_id in members:
+        try:
+            response = await client.users_info(user=user_id)
+        except SlackApiError as error:
+            logger.warning(
+                "팀원 프로필을 읽지 못해 초대에서 뺍니다 - user={} error={}",
+                user_id,
+                error.response.get("error"),
+            )
+            continue
+        profile = (response.get("user") or {}).get("profile") or {}
+        email = str(profile.get("email") or "").strip().lower()
+        if email.endswith(GOOGLE_MAIL_DOMAINS):
+            addresses.append(email)
+    return addresses
+
+
+async def _meeting_attendees(client: AsyncWebClient, team_channel: str) -> list[str]:
+    configured = settings.ONLINE_RETRO_TEAM_ATTENDEES.get(team_channel, [])
+    found = await _team_gmail_addresses(client, team_channel)
+    return sorted({email.strip().lower() for email in [*configured, *found]})
 
 
 def _timezone() -> ZoneInfo:
@@ -189,6 +230,7 @@ async def confirm_meeting_time(
     """
     starts_at, ends_at = slot_to_range(poll["meeting_date"], slot)
     credentials = _credentials()
+    attendees = await _meeting_attendees(client, poll["team_channel"])
 
     identity = {
         "meeting_date": poll["meeting_date"],
@@ -223,9 +265,7 @@ async def confirm_meeting_time(
             starts_at=starts_at,
             ends_at=ends_at,
             timezone=settings.GOOGLE_CALENDAR_TIMEZONE,
-            attendees=settings.ONLINE_RETRO_TEAM_ATTENDEES.get(
-                confirmation["team_channel"], []
-            ),
+            attendees=attendees,
         )
     except (GoogleApiError, GoogleAuthError) as error:
         await mark_failed(confirmation_id=confirmation["id"], error=str(error))
@@ -237,6 +277,9 @@ async def confirm_meeting_time(
         raise ConfirmationError(f"Google 일정 생성에 실패했어요: {error}") from error
 
     access_type, warning = await _apply_access_type(credentials, event.meet_url)
+    # OPEN이면 링크만으로 들어오므로 초대가 없어도 된다.
+    if not attendees and access_type != "OPEN":
+        warning = f"{warning} {NO_ATTENDEES_WARNING}".strip()
     confirmation = await mark_confirmed(
         confirmation_id=confirmation["id"],
         calendar_event_id=event.calendar_event_id,
@@ -244,10 +287,11 @@ async def confirm_meeting_time(
         meet_access_type=access_type,
     )
     logger.info(
-        "온라인 회고 시간을 확정했습니다 - team_channel={} slot={} created={}",
+        "온라인 회고 시간을 확정했습니다 - team_channel={} slot={} created={} invited={}",
         confirmation["team_channel"],
         slot,
         event.created,
+        len(attendees),
     )
 
     # DB 기록이 끝난 뒤에만 Slack에 올린다.
