@@ -182,6 +182,10 @@ main a:hover{color:#183894}
 .dots{gap:4px}
 .dot{background:#4f6fe2}
 .dot.miss{background:#d0d5dd}
+.dot.pass.manual{background:#f79009}
+.dot.pass.auto{background:transparent;box-shadow:inset 0 0 0 2px #98a2b3}
+.pill.pass-manual{background:#fff2d8;color:#854d0e}
+.pill.pass-auto{background:#eef0f4;color:#475467}
 .pill{display:inline-flex;align-items:center;min-height:24px;padding:3px 9px;border-radius:999px;font-weight:600;white-space:nowrap}
 .pill.pending{background:#fff2d8;color:#854d0e}
 .pill.processing,.pill.in_progress,.pill.now{background:#eaf0ff;color:#2444b4}

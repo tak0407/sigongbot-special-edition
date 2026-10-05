@@ -639,3 +639,23 @@ class MembersTabTest(AdminWebTestCase):
         # 같은 시각이면 나중에 들어온 행(= 더 큰 id)이 마지막 제출이다.
         self.assertEqual(by_id["U11111111"]["last_session"], "6기 2회차")
         self.assertEqual(by_id["U11111111"]["streak"], 0)
+
+    async def test_shows_whether_each_pass_was_manual_or_auto(self):
+        self._patch_sessions()
+        with get_connection() as connection:
+            connection.execute(
+                """INSERT INTO session_passes (user_id, session_name, cohort, team_channel, source) VALUES ('U22222222', '6기 1회차', '6기', 'C11111111', 'auto')"""
+            )
+            connection.execute(
+                """INSERT INTO session_passes (user_id, session_name, cohort, team_channel) VALUES ('U22222222', '6기 3회차', '6기', 'C11111111')"""
+            )
+        data = await asyncio.to_thread(members._collect)
+        by_id = {member["user_id"]: member for member in data["members"]}
+        self.assertEqual(
+            by_id["U22222222"]["passes"],
+            [("6기 1회차", "auto"), ("6기 3회차", "manual")],
+        )
+        body = await (await self._get("/members")).text()
+        self.assertIn("6기 1회차 (자동 패스)", body)
+        self.assertIn('pass-manual">직접</span>', body)
+        self.assertIn("2 / 2", body)

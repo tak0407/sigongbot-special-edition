@@ -1,5 +1,6 @@
 """회차 회고를 건너뛰는 패스 버튼과 확인 모달."""
 
+import asyncio
 import json
 
 from loguru import logger
@@ -11,14 +12,17 @@ from constants import MAX_PASS_COUNT
 from database.passes import (
     PassAlreadyUsed,
     attach_message,
+    auto_pass_closed_sessions,
     check_eligibility_async,
     record_pass,
 )
 from slack.ephemeral import post_ephemeral
 from slack.events.submission_entry import submission_preflight
+from utils import tz_now
 
 PASS_ACTION_ID = "use_session_pass"
 PASS_CALLBACK_ID = "session_pass_confirm"
+AUTO_PASS_INTERVAL_SECONDS = 300
 
 
 def build_pass_view(*, session_name: str, channel_id: str, eligibility) -> dict:
@@ -152,3 +156,17 @@ async def handle_pass_confirm(
         logger.bind(alert=False).warning(
             "패스 공개 안내 실패 - user_id={}, session={}", user_id, session_name
         )
+
+
+async def run_auto_pass_scheduler() -> None:
+    """마감된 회차의 미제출자에게 자동 패스를 기록한다. 대상자 명단은 로그에 남기지 않는다."""
+    logger.info("자동 패스 스케줄러가 시작되었습니다.")
+    while True:
+        try:
+            recorded = await asyncio.to_thread(auto_pass_closed_sessions, tz_now())
+            for session_name in sorted({session for _, session in recorded}):
+                count = sum(1 for _, session in recorded if session == session_name)
+                logger.info("자동 패스 기록 - session={}, {}명", session_name, count)
+        except Exception:
+            logger.exception("자동 패스 기록에 실패했습니다.")
+        await asyncio.sleep(AUTO_PASS_INTERVAL_SECONDS)

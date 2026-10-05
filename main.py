@@ -31,6 +31,7 @@ try:
     from slack.events.unsubmitted_reminder import (
         run_unsubmitted_reminder_scheduler,
     )
+    from slack.events.session_pass import run_auto_pass_scheduler
 except Exception:
     logger.exception("시공봇 설정을 불러오지 못해 시작할 수 없습니다.")
     raise
@@ -105,6 +106,9 @@ async def main():
             lambda: run_unsubmitted_reminder_scheduler(slack_app.client),
         )
     ) if settings.ENV == "prod" and settings.SUBMISSION_DESTINATIONS else None
+    auto_pass_task = asyncio.create_task(
+        supervise("자동 패스 스케줄러", run_auto_pass_scheduler)
+    ) if settings.ENV == "prod" and settings.SUBMISSION_DESTINATIONS else None
 
     try:
         # HTTP 서버 시작
@@ -128,6 +132,9 @@ async def main():
         if reminder_task:
             reminder_task.cancel()
             tasks.append(reminder_task)
+        if auto_pass_task:
+            auto_pass_task.cancel()
+            tasks.append(auto_pass_task)
         await asyncio.gather(*tasks, return_exceptions=True)
         await handler.close_async()
         await runner.cleanup()

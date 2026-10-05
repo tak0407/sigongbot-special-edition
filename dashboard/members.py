@@ -11,7 +11,7 @@ from html import escape
 from aiohttp import web
 
 from config import settings
-from constants import DUE_DATES, SESSION_NAMES
+from constants import DUE_DATES, MAX_PASS_COUNT, SESSION_NAMES
 from dashboard import directory as slack_directory
 from dashboard import layout
 from dashboard.auth import require_admin
@@ -22,6 +22,8 @@ from utils import get_current_session_info, tz_now
 
 # 표에 점으로 찍어 줄 최근 회차 수. 너무 길면 한 줄을 넘어간다.
 RECENT_MARKS = 10
+# 패스를 누가 썼는지 표에 보일 이름.
+PASS_LABELS = {"manual": "직접", "auto": "자동"}
 # 이 횟수 이상 연속으로 빠지면 이탈 위험으로 본다.
 AT_RISK_MISSES = 2
 COHORT = re.compile(r"^(\d+기)")
@@ -44,6 +46,10 @@ def _finished_sessions(current_name: str, now) -> list[str]:
         for name, due in zip(SESSION_NAMES, DUE_DATES)
         if due <= now and _cohort(name) == cohort
     ]
+
+
+def _session_order(name: str) -> int:
+    return SESSION_NAMES.index(name) if name in SESSION_NAMES else len(SESSION_NAMES)
 
 
 def _streak(sessions: list[str], submitted: set[str]) -> int:
@@ -74,6 +80,10 @@ def _collect() -> dict:
              ORDER BY created_at DESC, id DESC
             """
         ).fetchall()
+        pass_rows = connection.execute(
+            "SELECT user_id, session_name, source FROM session_passes WHERE cohort = ?",
+            (_cohort(current_name or SESSION_NAMES[-1]),),
+        ).fetchall()
 
     submitted: dict[str, set[str]] = {}
     last_by_user: dict[str, dict] = {}
@@ -81,11 +91,16 @@ def _collect() -> dict:
         submitted.setdefault(row["user_id"], set()).add(row["session_name"])
         last_by_user.setdefault(row["user_id"], dict(row))
 
+    passes: dict[str, dict[str, str]] = {}
+    for row in pass_rows:
+        passes.setdefault(row["user_id"], {})[row["session_name"]] = row["source"]
+
     # 명단에 없는 제출자(테스트 계정, 배정 누락)도 실제 참여자이므로 함께 센다.
     user_ids = set(destinations) | set(submitted)
     members = []
     for user_id in user_ids:
         mine = submitted.get(user_id, set())
+        passed = passes.get(user_id, {})
         done = mine & scope
         streak = _streak(sessions, mine)
         last = last_by_user.get(user_id)
@@ -97,7 +112,14 @@ def _collect() -> dict:
                 "total": len(sessions),
                 "rate": len(done) / len(sessions) if sessions else 0.0,
                 "streak": streak,
-                "marks": [(name, name in mine) for name in sessions[-RECENT_MARKS:]],
+                "marks": [
+                    (name, name in mine, passed.get(name))
+                    for name in sessions[-RECENT_MARKS:]
+                ],
+                # 진행 중인 회차에 버튼으로 쓴 패스도 함께 보이도록 회차 순으로 둔다.
+                "passes": sorted(
+                    passed.items(), key=lambda item: _session_order(item[0])
+                ),
                 "current_done": bool(current_name and current_name in mine),
                 "last_session": last["session_name"] if last else "",
                 "last_at": last["created_at"] if last else "",
@@ -132,11 +154,26 @@ def _collect() -> dict:
 def _marks_cell(member: dict) -> str:
     if not member["marks"]:
         return '<span class="sub">마감된 회차 없음</span>'
-    dots = "".join(
-        f'<i class="dot{"" if done else " miss"}" title="{escape(name)}"></i>'
-        for name, done in member["marks"]
+    dots = []
+    for name, done, source in member["marks"]:
+        if done:
+            css, title = "", name
+        elif source:
+            css, title = f" pass {source}", f"{name} ({PASS_LABELS[source]} 패스)"
+        else:
+            css, title = " miss", name
+        dots.append(f'<i class="dot{css}" title="{escape(title)}"></i>')
+    return f'<span class="dots">{"".join(dots)}</span>'
+
+
+def _pass_cell(member: dict) -> str:
+    if not member["passes"]:
+        return '<span class="sub">-</span>'
+    items = "".join(
+        f'<div>{escape(name)} <span class="pill pass-{source}">{PASS_LABELS[source]}</span></div>'
+        for name, source in member["passes"]
     )
-    return f'<span class="dots">{dots}</span>'
+    return f'{len(member["passes"])} / {MAX_PASS_COUNT}{items}'
 
 
 def _member_rows(data: dict, directory: dict) -> str:
@@ -182,10 +219,11 @@ def _member_rows(data: dict, directory: dict) -> str:
             f'<div class="sub">{round(member["rate"] * 100)}%</div></td>'
             f"<td>{streak_cell}</td>"
             f"<td>{_marks_cell(member)}</td>"
+            f"<td>{_pass_cell(member)}</td>"
             f"<td>{last}</td>"
             "</tr>"
         )
-    return rows(items, 7, "집계할 멤버가 없습니다. SUBMISSION_TEAMS를 확인하세요.")
+    return rows(items, 8, "집계할 멤버가 없습니다. SUBMISSION_TEAMS를 확인하세요.")
 
 
 @require_admin
@@ -211,9 +249,9 @@ async def handle(request: web.Request) -> web.Response:
 <div class="{never_card}">제출 이력 없음<div class="number">{data['never']}명</div><small>한 번도 제출하지 않음</small></div>
 </section>
 <h2>멤버별 참여 이력</h2>
-<small>연속 미제출이 긴 순서입니다. 점은 최근 {RECENT_MARKS}개 회차이고, 왼쪽이 오래된 회차입니다. 점에 마우스를 올리면 회차 이름이 보입니다.</small>
+<small>연속 미제출이 긴 순서입니다. 점은 최근 {RECENT_MARKS}개 회차이고, 왼쪽이 오래된 회차입니다. 점에 마우스를 올리면 회차 이름이 보입니다. 주황 점은 직접 쓴 패스, 회색 테두리 점은 미제출로 자동 처리된 패스입니다.</small>
 <p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr>
-<th>멤버</th><th>팀</th><th>이번 회차</th><th>제출</th><th>연속 미제출</th><th>최근 회차</th><th>마지막 제출</th>
+<th>멤버</th><th>팀</th><th>이번 회차</th><th>제출</th><th>연속 미제출</th><th>최근 회차</th><th>패스</th><th>마지막 제출</th>
 </tr></thead><tbody>{_member_rows(data, directory)}</tbody></table></div>
 """
     return web.Response(

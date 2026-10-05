@@ -492,6 +492,21 @@ def _sessions_resting(connection: sqlite3.Connection) -> None:
     )
 
 
+def _session_passes_source(connection: sqlite3.Connection) -> None:
+    """패스를 누가 썼는지 구분한다.
+
+    `manual`은 본인이 버튼으로 쓴 패스, `auto`는 마감 뒤 미제출자에게 봇이
+    기록한 패스다. 이 버전 전에 쌓인 행은 모두 버튼으로 쓴 것으로 둔다.
+    """
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(session_passes)")}
+    if "source" in columns:
+        return
+    connection.execute(
+        "ALTER TABLE session_passes ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"
+        " CHECK (source IN ('manual', 'auto'))"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -508,6 +523,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (13, "online_retro_confirmed_meetings", _online_retro_confirmed_meetings),
     (14, "session_passes", _session_passes),
     (15, "sessions_resting", _sessions_resting),
+    (16, "session_passes_source", _session_passes_source),
 )
 
 

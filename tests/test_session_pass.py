@@ -225,3 +225,78 @@ class PassReminderTest(PassTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutoPassTest(PassTestCase):
+    def due(self, session_name: str) -> datetime.datetime:
+        return sessions_db.get_session(session_name)["due_at"]
+
+    def submit(self, session_name: str, user_id: str = "U11111111", *, test: bool = False):
+        with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO retrospectives
+                    (user_id, session_name, slack_channel, slack_ts, good_points,
+                     improvements, learnings, action_item, is_test_submission)
+                VALUES (?, ?, 'C11111111', '1.0', '', '', '', '', ?)
+                """,
+                (user_id, session_name, int(test)),
+            )
+
+    def after(self, session_name: str) -> datetime.datetime:
+        return self.due(session_name) + passes.AUTO_PASS_GRACE
+
+    async def test_does_nothing_before_the_grace_period_ends(self):
+        before = self.after("9기 1회차") - datetime.timedelta(seconds=1)
+        recorded = passes.auto_pass_closed_sessions(before)
+        self.assertNotIn(("U11111111", "9기 1회차"), recorded)
+
+    async def test_passes_an_unsubmitted_member_once(self):
+        now = self.after("9기 1회차")
+        self.assertEqual(
+            passes.auto_pass_closed_sessions(now), [("U11111111", "9기 1회차")]
+        )
+        self.assertEqual(passes.auto_pass_closed_sessions(now), [])
+        self.assertEqual(passes.passed_user_ids("9기 1회차"), {"U11111111"})
+        with get_connection() as connection:
+            source = connection.execute(
+                "SELECT source FROM session_passes WHERE session_name = '9기 1회차'"
+            ).fetchone()["source"]
+        self.assertEqual(source, passes.AUTO)
+
+    async def test_button_passes_are_recorded_as_manual(self):
+        self.use("9기 1회차")
+        with get_connection() as connection:
+            source = connection.execute("SELECT source FROM session_passes").fetchone()[0]
+        self.assertEqual(source, passes.MANUAL)
+
+    async def test_skips_members_who_submitted(self):
+        self.submit("9기 1회차")
+        self.assertEqual(passes.auto_pass_closed_sessions(self.after("9기 1회차")), [])
+
+    async def test_test_submissions_do_not_count_as_submitted(self):
+        self.submit("9기 1회차", test=True)
+        self.assertEqual(
+            passes.auto_pass_closed_sessions(self.after("9기 1회차")),
+            [("U11111111", "9기 1회차")],
+        )
+
+    async def test_never_passes_two_sessions_in_a_row(self):
+        recorded = passes.auto_pass_closed_sessions(self.after("9기 3회차"))
+        self.assertEqual(
+            recorded, [("U11111111", "9기 1회차"), ("U11111111", "9기 3회차")]
+        )
+
+    async def test_a_manual_pass_blocks_the_next_auto_pass(self):
+        self.use("9기 1회차")
+        self.submit("9기 3회차")
+        self.assertEqual(passes.auto_pass_closed_sessions(self.after("9기 3회차")), [])
+
+    async def test_stops_at_the_cohort_quota(self):
+        self.use("9기 1회차")
+        self.use("9기 3회차")
+        self.assertEqual(passes.auto_pass_closed_sessions(self.after("9기 3회차")), [])
+
+    async def test_ignores_sessions_of_an_earlier_cohort(self):
+        recorded = passes.auto_pass_closed_sessions(self.after("9기 1회차"))
+        self.assertNotIn(("U11111111", "8기 12회차"), recorded)
