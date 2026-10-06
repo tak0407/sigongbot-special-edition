@@ -1039,6 +1039,28 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
         # setUp 투표는 20:00~21:00이 2표로 가장 많다.
         self.assertIn('<option value="20:00~21:00" selected>', body)
 
+    async def test_test_poll_on_a_real_team_cannot_be_confirmed(self):
+        poll = await create_poll(
+            meeting_date="2026-10-11",
+            session_name="6기 5회차",
+            team_channel="C22222222",
+            team_name="블루팀",
+            slots=ALL_OPTIONS,
+            is_test=True,
+        )
+        with self._teams():
+            body = await (await self.client.get("/online-retro", headers=self._headers())).text()
+            response = await self.client.post(
+                f"/online-retro/{poll['id']}/confirm",
+                data={"slot": "20:00~21:00", "csrf_token": self._csrf()},
+                headers=self._headers(),
+                allow_redirects=False,
+            )
+        self.assertIn("실제 팀을 가리키는 테스트 투표라 확정하지 않습니다", body)
+        self.assertIn("확정할 수 없어요", unquote(response.headers["Location"]))
+        self.assertIsNone(await get_confirmation(poll["id"]))
+        self.assertEqual(self.google.calls, [])
+
     async def test_poll_requires_csrf_token(self):
         with self._teams():
             response = await self._post_polls(csrf_token="")

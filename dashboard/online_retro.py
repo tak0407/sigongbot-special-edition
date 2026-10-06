@@ -311,17 +311,30 @@ def _confirmation_detail(confirmation: dict | None) -> str:
     )
 
 
+def _confirmable(poll: dict) -> bool:
+    """실제 팀 채널을 가리키는 테스트 투표는 확정하지 않는다.
+
+    확정하면 그 팀 채널에 공지가 나가고 팀원 Gmail로 Calendar 초대가 간다.
+    """
+    return not poll["is_test"] or poll["team_channel"] not in _team_channels()
+
+
 def _team_card(poll: dict, directory: dict, csrf: str) -> str:
     confirmation = poll["confirmation"]
-    size = 0 if poll["is_test"] else _team_size(poll["team_channel"])
+    size = _team_size(poll["team_channel"])
     responded = (
         f"팀원 {size}명 중 {poll['voters']}명 응답" if size else f"{poll['voters']}명 응답"
+    )
+    controls = (
+        _confirm_controls(poll, confirmation, csrf)
+        if _confirmable(poll)
+        else '<div class="meta">실제 팀을 가리키는 테스트 투표라 확정하지 않습니다.</div>'
     )
     return f"""<article class="retro-team">
 <h3>{escape(poll['team_name'])} {_status_pill(confirmation)}</h3>
 <div class="meta">{channel_cell(directory, poll['team_channel'])} · {responded}</div>
 {_votes(poll)}
-{_confirm_controls(poll, confirmation, csrf)}
+{controls}
 {_confirmation_detail(confirmation)}
 </article>"""
 
@@ -529,6 +542,8 @@ async def handle_post_polls(request: web.Request) -> web.StreamResponse:
 @require_admin
 async def handle_confirm(request: web.Request) -> web.StreamResponse:
     poll = await _load_poll(request)
+    if not _confirmable(poll):
+        raise _redirect(error="실제 팀을 가리키는 테스트 투표는 확정할 수 없어요.")
     form = await request.post()
     slot = str(form.get("slot", "")).strip()
     existing = await get_confirmation(poll["id"])

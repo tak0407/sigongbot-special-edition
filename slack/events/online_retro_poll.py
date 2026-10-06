@@ -81,12 +81,14 @@ def build_poll_blocks(polls: list[dict]) -> list[dict]:
     """공지 하나에 묶인 팀 투표들. 시간은 팀마다 따로 정하므로 응답 현황만 보여 준다."""
     first = polls[0]
     prefix = "*[테스트]* 🧪\n\n" if first["is_test"] else ""
-    if first["is_test"]:
-        progress = f"{sum(poll['voters'] for poll in polls)}명 응답"
-    else:
-        progress = " · ".join(
-            f"{poll['team_name']} {poll['voters']}/{_team_size(poll['team_channel'])}"
-            for poll in polls
+
+    def progress(poll: dict) -> str:
+        size = _team_size(poll["team_channel"])
+        # 테스트 채널처럼 배정된 팀원이 없는 투표는 응답 수만 보인다.
+        return (
+            f"{poll['team_name']} {poll['voters']}/{size}"
+            if size
+            else f"{poll['team_name']} {poll['voters']}명"
         )
     return [
         {
@@ -99,7 +101,13 @@ def build_poll_blocks(polls: list[dict]) -> list[dict]:
                 ),
             },
         },
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*응답 현황*  {progress}"}},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*응답 현황*  " + " · ".join(progress(poll) for poll in polls),
+            },
+        },
         {
             "type": "actions",
             "elements": [
@@ -253,19 +261,21 @@ async def post_time_poll(
 
 
 async def _own_poll(anchor: dict, user_id: str) -> dict | None:
-    """공지에서 누른 사람의 팀 투표. 테스트 공지는 누구나 그 투표에 기록한다."""
-    if anchor["is_test"]:
-        return anchor
+    """공지에서 누른 사람의 팀 투표.
+
+    같은 공지에 붙은 팀 투표만 받는다. 아직 공지에 없는 팀이면 운영자가 다시
+    올려야 한다. 테스트 공지는 팀이 없는 사람도 첫 팀 투표로 눌러 볼 수 있다.
+    """
     team_channel = settings.SUBMISSION_DESTINATIONS.get(user_id)
-    if not team_channel:
-        return None
-    poll = await find_poll(
-        meeting_date=anchor["meeting_date"], team_channel=team_channel, is_test=False
-    )
-    # 같은 공지에 붙은 팀 투표만 받는다. 아직 공지에 없는 팀이면 운영자가 다시 올린다.
-    if poll is None or poll["slack_ts"] != anchor["slack_ts"]:
-        return None
-    return poll
+    if team_channel:
+        poll = await find_poll(
+            meeting_date=anchor["meeting_date"],
+            team_channel=team_channel,
+            is_test=bool(anchor["is_test"]),
+        )
+        if poll and poll["slack_ts"] == anchor["slack_ts"]:
+            return poll
+    return anchor if anchor["is_test"] else None
 
 
 async def handle_open_time_poll(

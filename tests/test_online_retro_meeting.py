@@ -332,6 +332,27 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ephemeral["channel"], "C0ANNOUNCE")
         self.assertIn("블루팀 투표에 저장했어요", ephemeral["text"])
 
+    async def test_test_announcement_routes_by_team_and_lets_anyone_try(self):
+        await post_time_poll(
+            self.client,
+            teams=[("C11111111", "그린팀"), ("C22222222", "블루팀")],
+            meeting_date=datetime.date(2026, 10, 11),
+            session_name="6기 5회차",
+            message_channel="C0TEST",
+            is_test=True,
+        )
+        polls = {
+            poll["team_name"]: poll
+            for poll in await message_polls(meeting_date="2026-10-11", is_test=True)
+        }
+        self.assertIn("[테스트]", self.client.chat_postMessage.await_args.kwargs["blocks"][0]["text"]["text"])
+        modal = await self._vote(polls["그린팀"], ["20:00~21:00"], "U22222222")
+        self.assertEqual(modal["private_metadata"], str(polls["블루팀"]["id"]))
+        # 팀 배정이 없는 사람도 테스트 공지는 첫 팀 투표로 눌러 볼 수 있다.
+        modal = await self._vote(polls["그린팀"], ["21:00~22:00"], "U99999999")
+        self.assertEqual(modal["private_metadata"], str(polls["그린팀"]["id"]))
+        self.assertIn("그린팀 1/2 · 블루팀 1/1", self._progress(self.client.chat_update))
+
     async def test_member_without_a_team_cannot_vote(self):
         await self._post()
         anchor = (await self._polls())["그린팀"]
@@ -418,9 +439,12 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("18:00~19:00", json.dumps(blocks, ensure_ascii=False))
         self.assertEqual(blocks[2]["elements"][0]["value"], "1")
 
-        test = build_poll_blocks([{**polls[0], "is_test": 1, "voters": 3}])
+        test = build_poll_blocks([{**polls[0], "is_test": 1, "voters": 1}])
         self.assertIn("[테스트]", test[0]["text"]["text"])
-        self.assertIn("3명 응답", test[1]["text"]["text"])
+        self.assertIn("그린팀 1/2", test[1]["text"]["text"])
+        # 테스트 채널처럼 배정된 팀원이 없는 투표는 응답 수만 보인다.
+        legacy = build_poll_blocks([{**polls[0], "team_channel": "C0TEST", "voters": 3}])
+        self.assertIn("그린팀 3명", legacy[1]["text"]["text"])
 
         edited = build_poll_blocks([{**polls[0], "intro_template": "{날짜} {모임}"}])
         # 정해 둔 치환자만 바꾸고 다른 중괄호는 그대로 둔다.
