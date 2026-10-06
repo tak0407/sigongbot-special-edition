@@ -249,6 +249,17 @@ async def handle_online_retro_attendance(
     if not session_name or await _meeting(session_name, team_channel) is None:
         raise ValueError("현재 설정된 온라인 회고 모임을 찾을 수 없어요.")
     user_id = body["user"]["id"]
+    # 확정 공지가 공지 채널에 모여 다른 팀 출석 버튼도 보인다. 팀 모임에는 그 팀원만
+    # 출석한다. 테스트 채널처럼 팀 채널이 아닌 모임은 누구나 눌러 볼 수 있다.
+    destinations = settings.SUBMISSION_DESTINATIONS
+    if team_channel in destinations.values() and destinations.get(user_id) != team_channel:
+        await post_ephemeral(
+            client,
+            channel=body["channel"]["id"],
+            user=user_id,
+            text="다른 팀 모임이에요. 자기 팀 확정 공지에서 출석 체크해 주세요.",
+        )
+        return
     created = await record_attendance(
         session_name=session_name, team_channel=team_channel, user_id=user_id
     )

@@ -162,7 +162,8 @@ def build_confirmation_blocks(confirmation: dict) -> list[dict]:
                     "text": (
                         f"<!date^{int(starts_at.timestamp())}^{{date_long_pretty}} {{time}}"
                         f"|{starts_at.isoformat()}>에 시작해요. "
-                        "모임 시작 전에 다시 공지를 드립니다."
+                        f"시작 {settings.ONLINE_RETRO_NOTIFY_MINUTES_BEFORE}분 전 공지와 당일 진행은 "
+                        f"<#{confirmation['team_channel']}>에서 해요."
                     ),
                 }
             ],
@@ -171,22 +172,24 @@ def build_confirmation_blocks(confirmation: dict) -> list[dict]:
 
 
 async def post_confirmation_announcement(
-    client: AsyncWebClient, confirmation: dict
+    client: AsyncWebClient, confirmation: dict, *, channel: str
 ) -> None:
-    """확정 공지를 팀 채널에 올린다. 시간이 바뀌면 기존 공지를 갱신한다."""
+    """확정 공지를 투표가 올라간 채널에 올린다. 시간이 바뀌면 기존 공지를 갱신한다.
+
+    투표를 공지 채널에 모으므로 결과도 같은 곳에서 본다. 시작 직전 공지와 당일
+    진행은 `@here`가 팀에만 가도록 팀 채널에서 한다.
+    """
     text = f"{confirmation['team_name']} 온라인 회고 시간이 확정됐어요."
     blocks = build_confirmation_blocks(confirmation)
     if confirmation.get("announced_slack_ts"):
         await client.chat_update(
-            channel=confirmation["team_channel"],
+            channel=channel,
             ts=confirmation["announced_slack_ts"],
             text=text,
             blocks=blocks,
         )
         return
-    response = await client.chat_postMessage(
-        channel=confirmation["team_channel"], text=text, blocks=blocks
-    )
+    response = await client.chat_postMessage(channel=channel, text=text, blocks=blocks)
     await mark_announced(
         confirmation_id=confirmation["id"], slack_ts=response["ts"]
     )
@@ -294,8 +297,10 @@ async def confirm_meeting_time(
         len(attendees),
     )
 
-    # DB 기록이 끝난 뒤에만 Slack에 올린다.
-    await post_confirmation_announcement(client, confirmation)
+    # DB 기록이 끝난 뒤에만 Slack에 올린다. 예전 투표는 팀 채널에 있다.
+    await post_confirmation_announcement(
+        client, confirmation, channel=poll.get("message_channel") or poll["team_channel"]
+    )
     return confirmation, warning
 
 

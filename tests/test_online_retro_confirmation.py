@@ -25,7 +25,13 @@ from dashboard import auth, register_dashboard_routes
 from dashboard import directory as slack_directory
 from dashboard.online_retro import _team_labels, second_sunday_after, team_name_from_channel
 from database.online_retro_confirmation import get_confirmation, list_confirmed
-from database.online_retro_poll import create_poll, get_poll, list_polls, save_vote
+from database.online_retro_poll import (
+    create_poll,
+    get_poll,
+    list_polls,
+    mark_poll_posted,
+    save_vote,
+)
 from database.sqlite import get_connection, initialize_database
 from google_workspace import calendar_meet
 from google_workspace.calendar_meet import (
@@ -440,6 +446,20 @@ class ConfirmMeetingTest(ConfirmationTestCase):
         self.assertNotEqual(green_confirmation["meet_url"], blue_confirmation["meet_url"])
         self.assertEqual(len(self.google.events), 2)
 
+    async def test_confirmation_goes_where_the_poll_was_posted(self):
+        poll = await self.make_poll()
+        await mark_poll_posted(poll["id"], "1700000000.0009", "C0ANNOUNCE")
+        poll = await get_poll(poll["id"])
+        await confirm_meeting_time(self.slack, poll=poll, slot="20:00~21:00")
+        message = self.slack.chat_postMessage.await_args.kwargs
+        self.assertEqual(message["channel"], "C0ANNOUNCE")
+        self.assertIn("<#C11111111>에서 해요", message["blocks"][2]["elements"][0]["text"])
+
+        # 시간을 바꾸면 같은 채널의 확정 공지를 고친다.
+        await confirm_meeting_time(self.slack, poll=poll, slot="21:00~22:00")
+        self.assertEqual(self.slack.chat_update.await_args.kwargs["channel"], "C0ANNOUNCE")
+        self.slack.chat_postMessage.assert_awaited_once()
+
     async def test_attendees_are_invited_when_configured(self):
         poll = await self.make_poll()
         with patch.object(
@@ -701,6 +721,39 @@ class SchedulerIntegrationTest(ConfirmationTestCase):
                 "SELECT COUNT(*) FROM online_retro_attendance"
             ).fetchone()[0]
         self.assertEqual(total, 1)
+
+    async def test_only_team_members_check_in_from_the_announcement(self):
+        poll = await self.make_poll()
+        await confirm_meeting_time(self.slack, poll=poll, slot="20:00~21:00")
+        value = json.dumps(
+            {"session_name": "6기 1회차", "team_channel": "C11111111"}, ensure_ascii=False
+        )
+        with patch.object(
+            settings,
+            "SUBMISSION_DESTINATIONS",
+            {"U11111111": "C11111111", "U22222222": "C22222222"},
+        ):
+            for user_id in ("U22222222", "U11111111"):
+                await handle_online_retro_attendance(
+                    AsyncMock(),
+                    {
+                        "actions": [{"value": value}],
+                        "user": {"id": user_id},
+                        "channel": {"id": "C0ANNOUNCE"},
+                    },
+                    self.slack,
+                )
+                if user_id == "U22222222":
+                    self.assertIn(
+                        "다른 팀 모임이에요",
+                        self.slack.chat_postEphemeral.await_args.kwargs["text"],
+                    )
+        with get_connection() as connection:
+            attendees = [
+                row[0]
+                for row in connection.execute("SELECT user_id FROM online_retro_attendance")
+            ]
+        self.assertEqual(attendees, ["U11111111"])
 
 
 class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
