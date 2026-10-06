@@ -297,11 +297,18 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
                 }
             }
         }
-        await handle_time_poll_submit(AsyncMock(), {"user": {"id": user_id}}, self.client, modal)
+        self.submit_ack = AsyncMock()
+        await handle_time_poll_submit(self.submit_ack, {"user": {"id": user_id}}, self.client, modal)
         return modal
 
     def _progress(self, method: AsyncMock) -> str:
         return method.await_args.kwargs["blocks"][1]["text"]["text"]
+
+    def _notice(self) -> str:
+        """마지막으로 띄운 안내 창의 본문. 안내는 채널 메시지가 아니라 창으로 보인다."""
+        view = self.client.views_open.await_args.kwargs["view"]
+        self.assertNotIn("callback_id", view)
+        return view["blocks"][0]["text"]["text"]
 
     async def test_one_announcement_carries_every_team_and_posts_once(self):
         self.assertEqual(await self._post(), PollPost(added=["그린팀", "블루팀"], new_message=True))
@@ -328,9 +335,12 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
         update = self.client.chat_update.await_args.kwargs
         self.assertEqual((update["channel"], update["ts"]), ("C0ANNOUNCE", "123.456"))
         self.assertIn("그린팀 0/2 · 블루팀 1/1", self._progress(self.client.chat_update))
-        ephemeral = self.client.chat_postEphemeral.await_args.kwargs
-        self.assertEqual(ephemeral["channel"], "C0ANNOUNCE")
-        self.assertIn("블루팀 투표에 저장했어요", ephemeral["text"])
+        # 같은 창이 저장 결과로 바뀌고, 채널에는 나에게만 보이는 메시지를 남기지 않는다.
+        saved = self.submit_ack.await_args.kwargs
+        self.assertEqual(saved["response_action"], "update")
+        self.assertIn("블루팀 투표에 저장했어요", saved["view"]["blocks"][0]["text"]["text"])
+        self.assertIn("19:00~20:00, 20:00~21:00", saved["view"]["blocks"][0]["text"]["text"])
+        self.client.chat_postEphemeral.assert_not_awaited()
 
     async def test_test_announcement_routes_by_team_and_lets_anyone_try(self):
         await post_time_poll(
@@ -357,17 +367,18 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
         await self._post()
         anchor = (await self._polls())["그린팀"]
         await handle_open_time_poll(AsyncMock(), self._action(anchor, "U99999999"), self.client)
+        self.assertIn("팀 배정이 없어", self._notice())
         await handle_mark_unavailable(AsyncMock(), self._action(anchor, "U99999999"), self.client)
-        self.client.views_open.assert_not_awaited()
+        self.assertIn("팀 배정이 없어", self._notice())
         self.client.chat_update.assert_not_awaited()
-        self.assertIn("팀 배정이 없어", self.client.chat_postEphemeral.await_args.kwargs["text"])
+        self.client.chat_postEphemeral.assert_not_awaited()
 
     async def test_team_missing_from_the_announcement_is_added_to_it(self):
         await self._post(teams=[("C11111111", "그린팀")])
         anchor = (await self._polls())["그린팀"]
         # 아직 공지에 붙지 않은 팀은 투표할 수 없다.
         await handle_open_time_poll(AsyncMock(), self._action(anchor, "U22222222"), self.client)
-        self.client.views_open.assert_not_awaited()
+        self.assertIn("팀 배정이 없어", self._notice())
 
         self.assertEqual(await self._post(), PollPost(added=["블루팀"], new_message=False))
         self.client.chat_postMessage.assert_awaited_once()
@@ -409,22 +420,20 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-    async def test_unavailable_button_answers_without_a_modal(self):
+    async def test_unavailable_button_answers_in_one_click(self):
         await self._post()
         anchor = (await self._polls())["그린팀"]
         await self._vote(anchor, ["19:00~20:00"])
         await handle_mark_unavailable(AsyncMock(), self._action(anchor), self.client)
 
-        self.assertEqual(self.client.views_open.await_count, 1)
         with get_connection() as connection:
             stored = connection.execute(
                 "SELECT slots_json FROM online_retro_time_votes WHERE user_id = 'U11111111'"
             ).fetchone()[0]
         self.assertEqual(json.loads(stored), [UNAVAILABLE])
         self.assertIn("그린팀 1/2", self._progress(self.client.chat_update))
-        ephemeral = self.client.chat_postEphemeral.await_args.kwargs
-        self.assertEqual(ephemeral["channel"], "C0ANNOUNCE")
-        self.assertIn("그린팀 투표에 이번엔 어렵다고", ephemeral["text"])
+        self.assertIn("그린팀 투표에 이번엔 어렵다고", self._notice())
+        self.client.chat_postEphemeral.assert_not_awaited()
 
     def test_message_shows_team_progress_not_slot_counts(self):
         polls = [

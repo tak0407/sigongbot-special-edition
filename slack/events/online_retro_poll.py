@@ -20,7 +20,6 @@ from database.online_retro_poll import (
     message_polls,
     save_vote,
 )
-from slack.ephemeral import post_ephemeral
 
 TIME_SLOTS = [
     "18:00~19:00",
@@ -278,6 +277,20 @@ async def _own_poll(anchor: dict, user_id: str) -> dict | None:
     return anchor if anchor["is_test"] else None
 
 
+def build_notice_view(text: str) -> dict:
+    """투표 결과와 안내를 보여 주는 창.
+
+    채널에 남기는 '나에게만 보이는 메시지'는 봇이 나중에 지우거나 고칠 수 없어
+    여러 번 누르면 쌓인다. 창은 닫으면 사라지므로 안내는 모두 창으로 띄운다.
+    """
+    return {
+        "type": "modal",
+        "title": {"type": "plain_text", "text": "온라인 회고 시간 투표"},
+        "close": {"type": "plain_text", "text": "닫기"},
+        "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}],
+    }
+
+
 async def handle_open_time_poll(
     ack: AsyncAck, body: dict, client: AsyncWebClient
 ) -> None:
@@ -288,7 +301,7 @@ async def handle_open_time_poll(
     user_id = body["user"]["id"]
     poll = await _own_poll(anchor, user_id)
     if poll is None:
-        await post_ephemeral(client, channel=body["channel"]["id"], user=user_id, text=NO_TEAM)
+        await client.views_open(trigger_id=body["trigger_id"], view=build_notice_view(NO_TEAM))
         return
     previous = await get_vote(poll["id"], user_id)
     await client.views_open(
@@ -299,7 +312,7 @@ async def handle_open_time_poll(
 async def handle_mark_unavailable(
     ack: AsyncAck, body: dict, client: AsyncWebClient
 ) -> None:
-    """모달 없이 한 번에 '이번엔 어려워요'로 응답한다. 이전 선택은 덮어쓴다."""
+    """시간 고르는 창 없이 한 번에 '이번엔 어려워요'로 응답한다. 이전 선택은 덮어쓴다."""
     await ack()
     anchor = await get_poll(int(body["actions"][0]["value"]))
     if anchor is None:
@@ -307,19 +320,18 @@ async def handle_mark_unavailable(
     user_id = body["user"]["id"]
     poll = await _own_poll(anchor, user_id)
     if poll is None:
-        await post_ephemeral(client, channel=body["channel"]["id"], user=user_id, text=NO_TEAM)
+        await client.views_open(trigger_id=body["trigger_id"], view=build_notice_view(NO_TEAM))
         return
     await save_vote(poll_id=poll["id"], user_id=user_id, slots=[UNAVAILABLE])
-    await _update_poll_message(client, poll)
-    await post_ephemeral(
-        client,
-        channel=body["channel"]["id"],
-        user=user_id,
-        text=(
-            f"{poll['team_name']} 투표에 이번엔 어렵다고 남겼어요. "
-            "시간이 되면 `가능한 시간 고르기`로 바꿀 수 있어요."
+    # trigger_id는 3초 안에만 쓸 수 있어 메시지를 고치기 전에 창부터 띄운다.
+    await client.views_open(
+        trigger_id=body["trigger_id"],
+        view=build_notice_view(
+            f"*{poll['team_name']} 투표에 이번엔 어렵다고 남겼어요*\n"
+            "시간이 되면 투표 메시지의 `가능한 시간 고르기`로 바꿀 수 있어요."
         ),
     )
+    await _update_poll_message(client, poll)
 
 
 async def handle_time_poll_submit(
@@ -347,11 +359,12 @@ async def handle_time_poll_submit(
     if not _can_vote(poll, user_id):
         raise ValueError(NOT_ON_TEAM)
     await save_vote(poll_id=poll["id"], user_id=user_id, slots=slots)
-    await ack()
-    await _update_poll_message(client, poll)
-    await post_ephemeral(
-        client,
-        channel=_message_channel(poll),
-        user=user_id,
-        text=f"{poll['team_name']} 투표에 저장했어요: {', '.join(slots)}",
+    # 같은 창을 저장 결과 화면으로 바꾼다. 채널에는 아무것도 남기지 않는다.
+    await ack(
+        response_action="update",
+        view=build_notice_view(
+            f"*{poll['team_name']} 투표에 저장했어요* ✅\n{', '.join(slots)}\n\n"
+            "바꾸려면 투표 메시지의 `가능한 시간 고르기`를 다시 누르세요."
+        ),
     )
+    await _update_poll_message(client, poll)
