@@ -33,7 +33,7 @@ from slack.events.online_retro_poll import (
     UNAVAILABLE,
     UNAVAILABLE_LABEL,
     meeting_day,
-    post_team_time_poll,
+    post_time_poll,
 )
 from utils import get_current_session_info, tz_now
 
@@ -188,6 +188,11 @@ def _poll_dialog(polls: list[dict], directory: dict, csrf: str) -> str:
             '<div class="warn"><code>SUBMISSION_TEAMS</code>에 팀 채널이 없어 '
             "시간 투표를 올릴 수 없습니다.</div>"
         )
+    if not settings.ANNOUNCEMENT_CHANNEL:
+        return (
+            '<div class="warn"><code>ANNOUNCEMENT_CHANNEL</code>이 비어 있어 '
+            "시간 투표를 올릴 곳이 없습니다.</div>"
+        )
     today = tz_now().date()
     meeting_date = second_sunday_after(today).isoformat()
     try:
@@ -200,24 +205,25 @@ def _poll_dialog(polls: list[dict], directory: dict, csrf: str) -> str:
     labels = _team_labels(channels, directory, polls)
     posted = _posted_channels(polls, meeting_date)
     targets = "".join(
-        f"<li><b>{escape(labels[channel])}</b> · {channel_cell(directory, channel)}"
+        f"<li><b>{escape(labels[channel])}</b> · 팀원 {_team_size(channel)}명"
         f"{' · 이미 올림' if channel in posted else ''}</li>"
-        for channel in channels
+        for channel in sorted(channels, key=labels.__getitem__)
     )
     return f"""<div class="toolbar">
 <button type="button" class="primary" data-dialog="poll-dialog">투표 올리기</button>
 </div>
 <dialog id="poll-dialog" aria-labelledby="poll-title">
 <div class="dialog-head"><h2 id="poll-title">시간 투표 올리기</h2><form method="dialog"><button aria-label="닫기">✕</button></form></div>
-<small>팀 채널마다 {POLL_WINDOW} 사이 1시간 단위 시간 투표를 올립니다. 날짜는 다음 둘째 일요일이 기본입니다.
-{session_note} 같은 날짜로 다시 눌러도 이미 올린 팀에는 다시 올리지 않습니다.</small>
+<small>공지 채널 {channel_cell(directory, settings.ANNOUNCEMENT_CHANNEL)}에 {POLL_WINDOW} 사이 1시간 단위 시간 투표를 하나 올립니다.
+누가 고르든 그 사람 팀의 투표로 기록되고, 팀별 결과는 이 화면에서 확정합니다. 날짜는 다음 둘째 일요일이 기본입니다.
+{session_note} 같은 날짜로 다시 눌러도 다시 올리지 않고, 빠진 팀만 그 공지에 더합니다.</small>
 <form method="post" action="{PAGE_PATH}/polls">
 <input type="hidden" name="csrf_token" value="{escape(csrf)}">
 <div class="filters"><input aria-label="모임 날짜" type="date" name="meeting_date" value="{meeting_date}" min="{today.isoformat()}" required></div>
-<div class="field"><small>공지 문구 · <code>{{팀}}</code>은 팀 이름으로, <code>{{날짜}}</code>는 모임 날짜({escape(meeting_day(meeting_date))})로 바뀝니다. 비우면 기본 문구를 씁니다.</small>
+<div class="field"><small>공지 문구 · <code>{{날짜}}</code>는 모임 날짜({escape(meeting_day(meeting_date))})로 바뀝니다. 비우면 기본 문구를 씁니다.</small>
 <textarea aria-label="투표 공지 문구" name="intro" rows="4" maxlength="{MAX_POLL_INTRO_LENGTH}">{escape(_latest_intro(polls))}</textarea></div>
-<div class="field"><small>올릴 팀 · 팀 이름은 채널 이름에서 정합니다.</small><ul class="retro-targets">{targets}</ul></div>
-<div class="filters"><button type="submit" class="primary">팀 채널에 투표 올리기</button></div>
+<div class="field"><small>팀 · 팀 이름은 채널 이름에서 정합니다.</small><ul class="retro-targets">{targets}</ul></div>
+<div class="filters"><button type="submit" class="primary">공지 채널에 투표 올리기</button></div>
 </form>
 </dialog>"""
 
@@ -401,7 +407,10 @@ def _invite_note() -> str:
 async def handle(request: web.Request) -> web.Response:
     polls = await _collect()
     directory = await get_directory(
-        request, {poll["team_channel"] for poll in polls} | set(_team_channels())
+        request,
+        {poll["team_channel"] for poll in polls}
+        | set(_team_channels())
+        | {settings.ANNOUNCEMENT_CHANNEL},
     )
     csrf = csrf_token(request)
     body = (
@@ -462,6 +471,8 @@ async def handle_post_polls(request: web.Request) -> web.StreamResponse:
     try:
         if not channels:
             raise PollError("SUBMISSION_TEAMS에 팀 채널이 없어 투표를 올릴 곳이 없어요.")
+        if not settings.ANNOUNCEMENT_CHANNEL:
+            raise PollError("ANNOUNCEMENT_CHANNEL이 비어 있어 투표를 올릴 곳이 없어요.")
         meeting_date = _parse_meeting_date(str(form.get("meeting_date", "")))
         session_name = session_for_meeting(meeting_date.isoformat())
         intro = _parse_intro(str(form.get("intro", "")))
@@ -472,54 +483,46 @@ async def handle_post_polls(request: web.Request) -> web.StreamResponse:
     if client is None:
         raise _redirect(error="Slack 클라이언트를 사용할 수 없습니다.")
 
-    polls = await list_polls()
-    labels = _team_labels(channels, await get_directory(request, set(channels)), polls)
-    already = _posted_channels(polls, meeting_date.isoformat())
-    posted, skipped, failed = [], [], []
-    for channel in channels:
-        name = labels[channel]
-        if channel in already:
-            skipped.append(name)
-            continue
-        try:
-            await post_team_time_poll(
-                client,
-                channel=channel,
-                team_name=name,
-                meeting_date=meeting_date,
-                session_name=session_name,
-                intro_template=intro,
-            )
-        except Exception as error:  # 한 팀이 실패해도 나머지 팀에는 올린다.
-            logger.exception("온라인 회고 시간 투표를 올리지 못했습니다 - team_channel={}", channel)
-            reason = (
-                error.response.get("error", "unknown")
-                if isinstance(error, SlackApiError)
-                else type(error).__name__
-            )
-            failed.append(f"{name}({reason})")
-        else:
-            posted.append(name)
-    logger.info(
-        "온라인 회고 시간 투표 - date={} session={} posted={} skipped={} failed={}",
-        meeting_date,
-        session_name,
-        len(posted),
-        len(skipped),
-        len(failed),
+    labels = _team_labels(
+        channels, await get_directory(request, set(channels)), await list_polls()
     )
-
-    summary = f"{meeting_date.month}월 {meeting_date.day}일({session_name}) 시간 투표를 "
-    summary += f"올렸습니다: {', '.join(posted)}." if posted else "새로 올린 팀은 없습니다."
-    if skipped:
-        summary += f" 이미 올라가 있던 팀은 건너뛰었습니다: {', '.join(skipped)}."
-    if failed:
+    teams = sorted(((channel, labels[channel]) for channel in channels), key=lambda team: team[1])
+    day = f"{meeting_date.month}월 {meeting_date.day}일({session_name})"
+    try:
+        result = await post_time_poll(
+            client,
+            teams=teams,
+            meeting_date=meeting_date,
+            session_name=session_name,
+            message_channel=settings.ANNOUNCEMENT_CHANNEL,
+            intro_template=intro,
+        )
+    except Exception as error:  # 투표 행은 남으니 다시 누르면 그대로 올린다.
+        logger.exception("온라인 회고 시간 투표를 올리지 못했습니다 - date={}", meeting_date)
+        reason = (
+            error.response.get("error", "unknown")
+            if isinstance(error, SlackApiError)
+            else type(error).__name__
+        )
         raise _redirect(
             error=(
-                f"{summary} 올리지 못한 팀: {', '.join(failed)}. "
-                "봇이 그 채널에 들어가 있는지 확인한 뒤 다시 누르면 그 팀에만 올립니다."
+                f"{day} 시간 투표를 공지 채널에 올리지 못했어요({reason}). "
+                "봇이 공지 채널에 들어가 있는지 확인한 뒤 다시 눌러 주세요."
             )
         )
+    logger.info(
+        "온라인 회고 시간 투표 - date={} session={} added={} new_message={}",
+        meeting_date,
+        session_name,
+        len(result.added),
+        result.new_message,
+    )
+    if result.new_message:
+        summary = f"{day} 시간 투표를 공지 채널에 올렸습니다: {', '.join(result.added)}."
+    elif result.added:
+        summary = f"{day} 공지에 빠진 팀을 더했습니다: {', '.join(result.added)}."
+    else:
+        summary = f"{day} 시간 투표는 이미 공지 채널에 올라가 있어요."
     raise _redirect(polls=summary)
 
 

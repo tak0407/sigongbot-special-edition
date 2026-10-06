@@ -51,6 +51,7 @@ CHANNEL_NAMES = {
     "C11111111": "green-team-weekly-report",
     "C22222222": "blue-team-weekly-report",
     "C33333333": "yellow-team-weekly-report",
+    "C0ANNOUNCE": "announcement",
 }
 CREDENTIALS = GoogleCredentials(
     client_id="test-client-id",
@@ -734,6 +735,7 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.enterContext(patch.object(settings, "SESSION_NAME_OVERRIDE", ""))
+        self.enterContext(patch.object(settings, "ANNOUNCEMENT_CHANNEL", "C0ANNOUNCE"))
         self.enterContext(
             patch(
                 "dashboard.online_retro.tz_now",
@@ -884,6 +886,7 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("users:read.email", body)
 
     def _teams(self):
+        # 블루팀(C22222222) 1명, 옐로우팀(C33333333) 2명.
         return patch.object(
             settings,
             "SUBMISSION_DESTINATIONS",
@@ -913,20 +916,24 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('data-dialog="poll-dialog"', body)
         self.assertIn('value="2026-10-11"', body)
         self.assertIn("6기 5회차", body)
-        self.assertIn("<b>블루팀</b>", body)
-        self.assertIn("<b>옐로우팀</b>", body)
+        self.assertIn("#announcement", body)
+        self.assertIn("<b>블루팀</b> · 팀원 1명", body)
+        self.assertIn("<b>옐로우팀</b> · 팀원 2명", body)
         self.assertNotIn('name="team_name_', body)
         self.assertIn('name="intro"', body)
         self.assertIn(escape(DEFAULT_POLL_INTRO), body)
 
-    async def test_poll_goes_to_every_team_with_the_open_session(self):
+    async def test_one_poll_goes_to_the_announcement_channel(self):
         with self._teams():
             response = await self._post_polls()
         self.assertEqual(response.status, 302)
         location = unquote(response.headers["Location"])
         self.assertIn("polls=", location)
         self.assertIn("6기 5회차", location)
-        self.assertEqual(self._posted_channels(), ["C22222222", "C33333333"])
+        self.assertIn("공지 채널에 올렸습니다: 블루팀, 옐로우팀", location)
+        self.assertEqual(self._posted_channels(), ["C0ANNOUNCE"])
+        progress = self.slack.chat_postMessage.await_args.kwargs["blocks"][1]["text"]["text"]
+        self.assertIn("블루팀 0/1 · 옐로우팀 0/2", progress)
         polls = await self._new_polls()
         self.assertEqual(polls["C22222222"]["team_name"], "블루팀")
         self.assertEqual(polls["C33333333"]["team_name"], "옐로우팀")
@@ -934,22 +941,17 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(poll["meeting_date"], "2026-10-11")
             self.assertEqual(poll["session_name"], "6기 5회차")
             self.assertFalse(poll["is_test"])
-            self.assertTrue(poll["slack_ts"])
+            self.assertEqual(poll["slack_ts"], "1700000000.0001")
+            self.assertEqual(poll["message_channel"], "C0ANNOUNCE")
             self.assertIsNone(poll["intro_template"])
-        header = self.slack.chat_postMessage.await_args_list[0].kwargs["blocks"][0]
-        self.assertIn("블루팀은 고개를 들어주세요!", header["text"]["text"])
 
-    async def test_edited_intro_is_rendered_per_team_and_offered_next_time(self):
-        intro = "*{팀}* 여러분, {날짜}에 모여요!\n가능한 시간을 골라 주세요."
+    async def test_edited_intro_is_rendered_and_offered_next_time(self):
+        intro = "*{날짜}* 온라인 회고, 가능한 시간을 골라 주세요!"
         with self._teams():
             await self._post_polls(intro=intro)
             body = await (await self.client.get("/online-retro", headers=self._headers())).text()
-        headers = [
-            call.kwargs["blocks"][0]["text"]["text"]
-            for call in self.slack.chat_postMessage.await_args_list
-        ]
-        self.assertIn("*블루팀* 여러분, 10월 11일(일)에 모여요!", headers[0])
-        self.assertIn("*옐로우팀* 여러분, 10월 11일(일)에 모여요!", headers[1])
+        header = self.slack.chat_postMessage.await_args.kwargs["blocks"][0]["text"]["text"]
+        self.assertEqual(header, "*10월 11일(일)* 온라인 회고, 가능한 시간을 골라 주세요!")
         polls = await self._new_polls()
         self.assertEqual({poll["intro_template"] for poll in polls.values()}, {intro})
         self.assertIn(escape(intro), body)
@@ -974,11 +976,11 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
             await self._post_polls()
             response = await self._post_polls()
             body = await (await self.client.get("/online-retro", headers=self._headers())).text()
-        self.assertEqual(self._posted_channels(), ["C22222222", "C33333333"])
-        self.assertIn("건너뛰었습니다", unquote(response.headers["Location"]))
+        self.assertEqual(self._posted_channels(), ["C0ANNOUNCE"])
+        self.assertIn("이미 공지 채널에 올라가 있어요", unquote(response.headers["Location"]))
         self.assertIn("이미 올림", body)
 
-    async def test_failed_team_is_retried_alone(self):
+    async def test_failed_post_is_retried_with_the_new_intro(self):
         self.slack.chat_postMessage.side_effect = [
             SlackApiError("not_in_channel", {"ok": False, "error": "not_in_channel"}),
             {"ts": "1700000000.0002"},
@@ -987,20 +989,23 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
             response = await self._post_polls()
             location = unquote(response.headers["Location"])
             self.assertIn("error=", location)
-            self.assertIn("블루팀(not_in_channel)", location)
-            self.assertIn("옐로우팀", location)
+            self.assertIn("공지 채널에 올리지 못했어요(not_in_channel)", location)
+            self.assertTrue(all(not poll["slack_ts"] for poll in (await self._new_polls()).values()))
 
-            # 아직 Slack에 없는 투표만 고친 문구로 다시 올라간다.
-            self.slack.chat_postMessage.side_effect = None
-            self.slack.chat_postMessage.return_value = {"ts": "1700000000.0003"}
-            response = await self._post_polls(intro="{팀} 다시 올립니다")
+            # 아직 Slack에 없는 투표라 고친 문구로 다시 올라간다.
+            response = await self._post_polls(intro="{날짜} 다시 올립니다")
         self.assertIn("polls=", unquote(response.headers["Location"]))
-        self.assertEqual(self._posted_channels(), ["C22222222", "C33333333", "C22222222"])
-        polls = await self._new_polls()
-        self.assertEqual(polls["C22222222"]["slack_ts"], "1700000000.0003")
-        self.assertEqual(polls["C33333333"]["slack_ts"], "1700000000.0002")
-        self.assertEqual(polls["C22222222"]["intro_template"], "{팀} 다시 올립니다")
-        self.assertIsNone(polls["C33333333"]["intro_template"])
+        self.assertEqual(self._posted_channels(), ["C0ANNOUNCE", "C0ANNOUNCE"])
+        for poll in (await self._new_polls()).values():
+            self.assertEqual(poll["slack_ts"], "1700000000.0002")
+            self.assertEqual(poll["intro_template"], "{날짜} 다시 올립니다")
+
+    async def test_missing_announcement_channel_posts_nothing(self):
+        with self._teams(), patch.object(settings, "ANNOUNCEMENT_CHANNEL", ""):
+            response = await self._post_polls()
+        self.assertIn("ANNOUNCEMENT_CHANNEL", unquote(response.headers["Location"]))
+        self.slack.chat_postMessage.assert_not_awaited()
+        self.assertEqual(await self._new_polls(), {})
 
     async def test_dates_without_an_open_session_post_nothing(self):
         cases = {
@@ -1039,7 +1044,6 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
             response = await self._post_polls(csrf_token="")
         self.assertEqual(response.status, 403)
         self.slack.chat_postMessage.assert_not_awaited()
-
 
 if __name__ == "__main__":
     unittest.main()

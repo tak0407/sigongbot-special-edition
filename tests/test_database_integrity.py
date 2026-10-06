@@ -148,6 +148,7 @@ class MigrationTest(unittest.TestCase):
         with closing(get_connection()) as connection:
             self.assertIn("slots_json", columns(connection, "online_retro_time_polls"))
             self.assertIn("intro_template", columns(connection, "online_retro_time_polls"))
+            self.assertIn("message_channel", columns(connection, "online_retro_time_polls"))
             self.assertEqual(
                 columns(connection, "online_retro_time_votes"),
                 {"poll_id", "user_id", "slots_json", "created_at", "updated_at"},

@@ -57,15 +57,53 @@ async def create_poll(
     return await asyncio.to_thread(insert)
 
 
-async def mark_poll_posted(poll_id: int, slack_ts: str) -> None:
+async def mark_poll_posted(poll_id: int, slack_ts: str, message_channel: str) -> None:
     def update() -> None:
         with get_connection() as connection:
             connection.execute(
-                "UPDATE online_retro_time_polls SET slack_ts = ? WHERE id = ?",
-                (slack_ts, poll_id),
+                "UPDATE online_retro_time_polls SET slack_ts = ?, message_channel = ? WHERE id = ?",
+                (slack_ts, message_channel, poll_id),
             )
 
     await asyncio.to_thread(update)
+
+
+async def find_poll(*, meeting_date: str, team_channel: str, is_test: bool) -> dict | None:
+    """공지 하나에서 누른 사람의 팀 투표를 찾는다."""
+
+    def select() -> dict | None:
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM online_retro_time_polls
+                 WHERE meeting_date = ? AND team_channel = ? AND is_test = ?
+                """,
+                (meeting_date, team_channel, int(is_test)),
+            ).fetchone()
+        return dict(row) if row else None
+
+    return await asyncio.to_thread(select)
+
+
+async def message_polls(*, meeting_date: str, is_test: bool) -> list[dict]:
+    """같은 날 공지 하나에 묶인 팀 투표들과 팀별 응답 인원."""
+
+    def select() -> list[dict]:
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT p.*, COUNT(v.user_id) AS voters
+                  FROM online_retro_time_polls p
+                  LEFT JOIN online_retro_time_votes v ON v.poll_id = p.id
+                 WHERE p.meeting_date = ? AND p.is_test = ?
+                 GROUP BY p.id
+                 ORDER BY p.team_name, p.id
+                """,
+                (meeting_date, int(is_test)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    return await asyncio.to_thread(select)
 
 
 async def get_poll(poll_id: int) -> dict | None:
@@ -110,23 +148,6 @@ async def get_vote(poll_id: int, user_id: str) -> list[str]:
                 (poll_id, user_id),
             ).fetchone()
         return json.loads(row[0]) if row else []
-
-    return await asyncio.to_thread(select)
-
-
-async def vote_counts(poll_id: int, slots: list[str]) -> tuple[dict[str, int], int]:
-    def select() -> tuple[dict[str, int], int]:
-        with get_connection() as connection:
-            rows = connection.execute(
-                "SELECT slots_json FROM online_retro_time_votes WHERE poll_id = ?",
-                (poll_id,),
-            ).fetchall()
-        counts = {slot: 0 for slot in slots}
-        for row in rows:
-            for slot in json.loads(row[0]):
-                if slot in counts:
-                    counts[slot] += 1
-        return counts, len(rows)
 
     return await asyncio.to_thread(select)
 

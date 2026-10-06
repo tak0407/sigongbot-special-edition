@@ -521,6 +521,20 @@ def _online_retro_poll_intro(connection: sqlite3.Connection) -> None:
     connection.execute("ALTER TABLE online_retro_time_polls ADD COLUMN intro_template TEXT")
 
 
+def _online_retro_poll_message_channel(connection: sqlite3.Connection) -> None:
+    """투표 메시지를 올린 채널.
+
+    팀 투표를 공지 채널에 모아 올리므로 투표의 팀(`team_channel`)과 메시지
+    위치가 달라졌다. 비어 있으면 예전처럼 팀 채널에 올라간 투표다.
+    """
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(online_retro_time_polls)")
+    }
+    if "message_channel" in columns:
+        return
+    connection.execute("ALTER TABLE online_retro_time_polls ADD COLUMN message_channel TEXT")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -539,6 +553,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (15, "sessions_resting", _sessions_resting),
     (16, "session_passes_source", _session_passes_source),
     (17, "online_retro_poll_intro", _online_retro_poll_intro),
+    (18, "online_retro_poll_message_channel", _online_retro_poll_message_channel),
 )
 
 

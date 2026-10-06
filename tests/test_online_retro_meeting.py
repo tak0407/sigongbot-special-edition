@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 from config import OnlineRetroMeeting, parse_online_retro_meetings, settings
+from database.online_retro_poll import message_polls
 from database.sqlite import get_connection, initialize_database
 from slack.events.online_retro_meeting import (
     build_online_retro_blocks,
@@ -23,11 +24,12 @@ from slack.events.online_retro_meeting import (
 )
 from slack.events.online_retro_poll import (
     UNAVAILABLE,
+    PollPost,
     build_poll_blocks,
     handle_mark_unavailable,
     handle_open_time_poll,
     handle_time_poll_submit,
-    post_team_time_poll,
+    post_time_poll,
 )
 
 
@@ -244,11 +246,12 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
                 str(Path(self.temporary.name) / "poll.db"),
             )
         )
+        # 그린팀(C11111111) 2명, 블루팀(C22222222) 1명.
         self.enterContext(
             patch.object(
                 settings,
                 "SUBMISSION_DESTINATIONS",
-                {"U11111111": "C11111111"},
+                {"U11111111": "C11111111", "U33333333": "C11111111", "U22222222": "C22222222"},
             )
         )
         initialize_database()
@@ -259,101 +262,31 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
             views_open=AsyncMock(),
         )
 
-    async def test_functional_poll_posts_once_and_updates_vote_counts(self):
-        poll = await post_team_time_poll(
+    async def _post(self, teams=(("C11111111", "그린팀"), ("C22222222", "블루팀"))):
+        return await post_time_poll(
             self.client,
-            channel="C11111111",
-            team_name="그린팀",
+            teams=list(teams),
             meeting_date=datetime.date(2026, 10, 11),
             session_name="6기 5회차",
-            is_test=False,
-        )
-        await post_team_time_poll(
-            self.client,
-            channel="C11111111",
-            team_name="그린팀",
-            meeting_date=datetime.date(2026, 10, 11),
-            session_name="6기 5회차",
-            is_test=False,
-        )
-        self.client.chat_postMessage.assert_awaited_once()
-
-        await handle_open_time_poll(
-            AsyncMock(),
-            {
-                "actions": [{"value": str(poll["id"])}],
-                "trigger_id": "trigger-1",
-                "user": {"id": "U11111111"},
-                "channel": {"id": "C11111111"},
-            },
-            self.client,
-        )
-        modal = self.client.views_open.await_args.kwargs["view"]
-        modal["state"] = {
-            "values": {
-                "available_slots": {
-                    "available_slots_input": {
-                        "selected_options": [
-                            {"value": "19:00~20:00"},
-                            {"value": "20:00~21:00"},
-                        ]
-                    }
-                }
-            }
-        }
-        await handle_time_poll_submit(
-            AsyncMock(), {"user": {"id": "U11111111"}}, self.client, modal
-        )
-        updated = self.client.chat_update.await_args.kwargs["blocks"]
-        counts = updated[1]["text"]["text"]
-        self.assertIn("19:00~20:00 · *1명*", counts)
-        self.assertIn("20:00~21:00 · *1명*", counts)
-        with get_connection() as connection:
-            self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM online_retro_time_votes").fetchone()[0],
-                1,
-            )
-
-    async def test_production_poll_rejects_other_team_member(self):
-        poll = await post_team_time_poll(
-            self.client,
-            channel="C11111111",
-            team_name="그린팀",
-            meeting_date=datetime.date(2026, 10, 11),
-            session_name="6기 5회차",
-        )
-        await handle_open_time_poll(
-            AsyncMock(),
-            {
-                "actions": [{"value": str(poll["id"])}],
-                "trigger_id": "trigger-1",
-                "user": {"id": "U22222222"},
-                "channel": {"id": "C11111111"},
-            },
-            self.client,
-        )
-        self.client.views_open.assert_not_awaited()
-        self.assertIn("자신이 배정된 팀", self.client.chat_postEphemeral.await_args.kwargs["text"])
-
-    async def _post_poll(self) -> dict:
-        return await post_team_time_poll(
-            self.client,
-            channel="C11111111",
-            team_name="그린팀",
-            meeting_date=datetime.date(2026, 10, 11),
-            session_name="6기 5회차",
+            message_channel="C0ANNOUNCE",
         )
 
-    def _action(self, poll: dict, user_id: str = "U11111111") -> dict:
+    async def _polls(self) -> dict[str, dict]:
         return {
-            "actions": [{"value": str(poll["id"])}],
+            poll["team_name"]: poll
+            for poll in await message_polls(meeting_date="2026-10-11", is_test=False)
+        }
+
+    def _action(self, anchor: dict, user_id: str = "U11111111") -> dict:
+        return {
+            "actions": [{"value": str(anchor["id"])}],
             "trigger_id": "trigger-1",
             "user": {"id": user_id},
-            "channel": {"id": "C11111111"},
+            "channel": {"id": "C0ANNOUNCE"},
         }
 
-    async def _vote(self, poll: dict, slots: list[str]) -> None:
-        await handle_open_time_poll(AsyncMock(), self._action(poll), self.client)
+    async def _vote(self, anchor: dict, slots: list[str], user_id: str = "U11111111") -> dict:
+        await handle_open_time_poll(AsyncMock(), self._action(anchor, user_id), self.client)
         modal = self.client.views_open.await_args.kwargs["view"]
         modal["state"] = {
             "values": {
@@ -364,20 +297,73 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
                 }
             }
         }
-        await handle_time_poll_submit(
-            AsyncMock(), {"user": {"id": "U11111111"}}, self.client, modal
-        )
+        await handle_time_poll_submit(AsyncMock(), {"user": {"id": user_id}}, self.client, modal)
+        return modal
+
+    def _progress(self, method: AsyncMock) -> str:
+        return method.await_args.kwargs["blocks"][1]["text"]["text"]
+
+    async def test_one_announcement_carries_every_team_and_posts_once(self):
+        self.assertEqual(await self._post(), PollPost(added=["그린팀", "블루팀"], new_message=True))
+        self.assertEqual(await self._post(), PollPost(added=[], new_message=False))
+        self.client.chat_postMessage.assert_awaited_once()
+        self.assertEqual(self.client.chat_postMessage.await_args.kwargs["channel"], "C0ANNOUNCE")
+        polls = await self._polls()
+        self.assertEqual({poll["slack_ts"] for poll in polls.values()}, {"123.456"})
+        self.assertEqual({poll["message_channel"] for poll in polls.values()}, {"C0ANNOUNCE"})
+        self.assertIn("그린팀 0/2 · 블루팀 0/1", self._progress(self.client.chat_postMessage))
+
+    async def test_vote_goes_to_the_voters_own_team(self):
+        await self._post()
+        polls = await self._polls()
+        # 버튼에는 공지의 첫 팀(그린팀) 투표 ID가 들어 있다. 블루팀원이 눌러도 블루팀 투표로 연다.
+        modal = await self._vote(polls["그린팀"], ["19:00~20:00", "20:00~21:00"], "U22222222")
+        self.assertEqual(modal["private_metadata"], str(polls["블루팀"]["id"]))
+        self.assertIn("블루팀 · 10월 11일(일)", modal["blocks"][0]["label"]["text"])
+        with get_connection() as connection:
+            rows = connection.execute(
+                "SELECT poll_id, user_id FROM online_retro_time_votes"
+            ).fetchall()
+        self.assertEqual([tuple(row) for row in rows], [(polls["블루팀"]["id"], "U22222222")])
+        update = self.client.chat_update.await_args.kwargs
+        self.assertEqual((update["channel"], update["ts"]), ("C0ANNOUNCE", "123.456"))
+        self.assertIn("그린팀 0/2 · 블루팀 1/1", self._progress(self.client.chat_update))
+        ephemeral = self.client.chat_postEphemeral.await_args.kwargs
+        self.assertEqual(ephemeral["channel"], "C0ANNOUNCE")
+        self.assertIn("블루팀 투표에 저장했어요", ephemeral["text"])
+
+    async def test_member_without_a_team_cannot_vote(self):
+        await self._post()
+        anchor = (await self._polls())["그린팀"]
+        await handle_open_time_poll(AsyncMock(), self._action(anchor, "U99999999"), self.client)
+        await handle_mark_unavailable(AsyncMock(), self._action(anchor, "U99999999"), self.client)
+        self.client.views_open.assert_not_awaited()
+        self.client.chat_update.assert_not_awaited()
+        self.assertIn("팀 배정이 없어", self.client.chat_postEphemeral.await_args.kwargs["text"])
+
+    async def test_team_missing_from_the_announcement_is_added_to_it(self):
+        await self._post(teams=[("C11111111", "그린팀")])
+        anchor = (await self._polls())["그린팀"]
+        # 아직 공지에 붙지 않은 팀은 투표할 수 없다.
+        await handle_open_time_poll(AsyncMock(), self._action(anchor, "U22222222"), self.client)
+        self.client.views_open.assert_not_awaited()
+
+        self.assertEqual(await self._post(), PollPost(added=["블루팀"], new_message=False))
+        self.client.chat_postMessage.assert_awaited_once()
+        self.assertEqual((await self._polls())["블루팀"]["slack_ts"], "123.456")
+        self.assertIn("블루팀 0/1", self._progress(self.client.chat_update))
 
     async def test_modal_shows_checkboxes_with_the_previous_choice_checked(self):
-        poll = await self._post_poll()
-        await handle_open_time_poll(AsyncMock(), self._action(poll), self.client)
+        await self._post()
+        anchor = (await self._polls())["그린팀"]
+        await handle_open_time_poll(AsyncMock(), self._action(anchor), self.client)
         element = self.client.views_open.await_args.kwargs["view"]["blocks"][0]["element"]
         self.assertEqual(element["type"], "checkboxes")
         self.assertNotIn(UNAVAILABLE, [option["value"] for option in element["options"]])
         self.assertNotIn("initial_options", element)
 
-        await self._vote(poll, ["19:00~20:00", "21:00~22:00"])
-        await handle_open_time_poll(AsyncMock(), self._action(poll), self.client)
+        await self._vote(anchor, ["19:00~20:00", "21:00~22:00"])
+        await handle_open_time_poll(AsyncMock(), self._action(anchor), self.client)
         element = self.client.views_open.await_args.kwargs["view"]["blocks"][0]["element"]
         self.assertEqual(
             [option["value"] for option in element["initial_options"]],
@@ -385,9 +371,10 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_empty_choice_points_to_the_unavailable_button(self):
-        poll = await self._post_poll()
+        await self._post()
+        anchor = (await self._polls())["그린팀"]
         ack = AsyncMock()
-        await handle_open_time_poll(AsyncMock(), self._action(poll), self.client)
+        await handle_open_time_poll(AsyncMock(), self._action(anchor), self.client)
         modal = self.client.views_open.await_args.kwargs["view"]
         modal["state"] = {
             "values": {"available_slots": {"available_slots_input": {"selected_options": []}}}
@@ -402,57 +389,42 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_unavailable_button_answers_without_a_modal(self):
-        poll = await self._post_poll()
-        await self._vote(poll, ["19:00~20:00"])
-        await handle_mark_unavailable(AsyncMock(), self._action(poll), self.client)
+        await self._post()
+        anchor = (await self._polls())["그린팀"]
+        await self._vote(anchor, ["19:00~20:00"])
+        await handle_mark_unavailable(AsyncMock(), self._action(anchor), self.client)
 
         self.assertEqual(self.client.views_open.await_count, 1)
-        lines = self.client.chat_update.await_args.kwargs["blocks"][1]["text"]["text"]
-        self.assertIn("이번엔 어려워요 · *1명*", lines)
-        self.assertIn("19:00~20:00 · *0명*", lines)
         with get_connection() as connection:
             stored = connection.execute(
                 "SELECT slots_json FROM online_retro_time_votes WHERE user_id = 'U11111111'"
             ).fetchone()[0]
         self.assertEqual(json.loads(stored), [UNAVAILABLE])
-        self.assertIn("이번엔 어렵다고", self.client.chat_postEphemeral.await_args.kwargs["text"])
+        self.assertIn("그린팀 1/2", self._progress(self.client.chat_update))
+        ephemeral = self.client.chat_postEphemeral.await_args.kwargs
+        self.assertEqual(ephemeral["channel"], "C0ANNOUNCE")
+        self.assertIn("그린팀 투표에 이번엔 어렵다고", ephemeral["text"])
 
-    async def test_unavailable_button_rejects_other_team_member(self):
-        poll = await self._post_poll()
-        await handle_mark_unavailable(AsyncMock(), self._action(poll, "U22222222"), self.client)
-        self.client.chat_update.assert_not_awaited()
-        self.assertIn("자신이 배정된 팀", self.client.chat_postEphemeral.await_args.kwargs["text"])
-
-    def test_message_shows_counts_top_slot_and_team_response(self):
-        poll = {
-            "id": 1,
-            "team_name": "그린팀",
-            "team_channel": "C11111111",
-            "meeting_date": "2026-10-11",
-            "is_test": 0,
-        }
-        counts = {"19:00~20:00": 1, "20:00~21:00": 2, UNAVAILABLE: 1}
-        with patch.object(
-            settings,
-            "SUBMISSION_DESTINATIONS",
-            {"U1": "C11111111", "U2": "C11111111", "U3": "C11111111", "U4": "C22222222"},
-        ):
-            blocks = build_poll_blocks(poll, counts, 3)
+    def test_message_shows_team_progress_not_slot_counts(self):
+        polls = [
+            {"id": 1, "team_name": "그린팀", "team_channel": "C11111111",
+             "meeting_date": "2026-10-11", "is_test": 0, "voters": 2},
+            {"id": 2, "team_name": "블루팀", "team_channel": "C22222222",
+             "meeting_date": "2026-10-11", "is_test": 0, "voters": 0},
+        ]
+        blocks = build_poll_blocks(polls)
         self.assertIn("10월 11일(일)", blocks[0]["text"]["text"])
-        lines = blocks[1]["text"]["text"]
-        self.assertIn("20:00~21:00 · *2명* ⭐", lines)
-        self.assertNotIn("19:00~20:00 · *1명* ⭐", lines)
-        self.assertNotIn("<@", lines)
-        self.assertIn("팀원 3명 중 3명 응답", blocks[3]["elements"][0]["text"])
+        self.assertIn("그린팀 2/2 · 블루팀 0/1", blocks[1]["text"]["text"])
+        self.assertNotIn("18:00~19:00", json.dumps(blocks, ensure_ascii=False))
+        self.assertEqual(blocks[2]["elements"][0]["value"], "1")
 
-        empty = build_poll_blocks({**poll, "is_test": 1}, {}, 0)
-        self.assertNotIn("⭐", empty[1]["text"]["text"])
-        self.assertIn("0명 응답", empty[3]["elements"][0]["text"])
+        test = build_poll_blocks([{**polls[0], "is_test": 1, "voters": 3}])
+        self.assertIn("[테스트]", test[0]["text"]["text"])
+        self.assertIn("3명 응답", test[1]["text"]["text"])
 
-        edited = build_poll_blocks({**poll, "intro_template": "{팀}, {날짜} {모임}"}, {}, 0)
+        edited = build_poll_blocks([{**polls[0], "intro_template": "{날짜} {모임}"}])
         # 정해 둔 치환자만 바꾸고 다른 중괄호는 그대로 둔다.
-        self.assertEqual(edited[0]["text"]["text"], "그린팀, 10월 11일(일) {모임}")
-
+        self.assertEqual(edited[0]["text"]["text"], "10월 11일(일) {모임}")
 
 if __name__ == "__main__":
     unittest.main()
