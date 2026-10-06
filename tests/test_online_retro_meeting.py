@@ -391,7 +391,10 @@ class OnlineRetroPollTest(unittest.IsolatedAsyncioTestCase):
         await handle_open_time_poll(AsyncMock(), self._action(anchor), self.client)
         element = self.client.views_open.await_args.kwargs["view"]["blocks"][0]["element"]
         self.assertEqual(element["type"], "checkboxes")
-        self.assertNotIn(UNAVAILABLE, [option["value"] for option in element["options"]])
+        values = [option["value"] for option in element["options"]]
+        # 일요일 오후부터 고른다. Slack 체크박스는 10개까지다.
+        self.assertEqual((values[0], values[-1], len(values)), ("13:00~14:00", "22:00~23:00", 10))
+        self.assertNotIn(UNAVAILABLE, values)
         self.assertNotIn("initial_options", element)
 
         await self._vote(anchor, ["19:00~20:00", "21:00~22:00"])

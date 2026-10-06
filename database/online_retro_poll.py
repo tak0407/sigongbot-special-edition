@@ -176,9 +176,9 @@ async def list_polls() -> list[dict]:
             counts = {slot: 0 for slot in poll["slots"]}
             raw_votes = votes.get(poll["id"], [])
             for payload in raw_votes:
+                # 시간대 목록이 바뀐 뒤 예전 투표에 들어온 응답도 센다.
                 for slot in json.loads(payload):
-                    if slot in counts:
-                        counts[slot] += 1
+                    counts[slot] = counts.get(slot, 0) + 1
             poll["counts"] = counts
             poll["voters"] = len(raw_votes)
         return polls

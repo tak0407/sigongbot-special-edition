@@ -1092,6 +1092,20 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
         # setUp 투표는 20:00~21:00이 2표로 가장 많다.
         self.assertIn('<option value="20:00~21:00" selected>', body)
 
+    async def test_afternoon_votes_show_on_polls_made_before_the_change(self):
+        older_slots = ["18:00~19:00", "19:00~20:00", "20:00~21:00", "21:00~22:00", "22:00~23:00", UNAVAILABLE]
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE online_retro_time_polls SET slots_json = ? WHERE id = ?",
+                (json.dumps(older_slots, ensure_ascii=False), self.poll_id),
+            )
+        await save_vote(poll_id=self.poll_id, user_id="U33333333", slots=["14:00~15:00"])
+        body = await (await self.client.get("/online-retro", headers=self._headers())).text()
+        self.assertIn("<span>14:00~15:00</span>", body)
+        self.assertIn('<option value="13:00~14:00">', body)
+        polls = {poll["id"]: poll for poll in await list_polls()}
+        self.assertEqual(polls[self.poll_id]["counts"]["14:00~15:00"], 1)
+
     async def test_test_poll_on_a_real_team_cannot_be_confirmed(self):
         poll = await create_poll(
             meeting_date="2026-10-11",

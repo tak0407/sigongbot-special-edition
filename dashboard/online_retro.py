@@ -27,6 +27,7 @@ from slack.events.online_retro_confirmation import (
     slot_to_range,
 )
 from slack.events.online_retro_poll import (
+    ALL_OPTIONS,
     DEFAULT_POLL_INTRO,
     MAX_POLL_INTRO_LENGTH,
     TIME_SLOTS,
@@ -247,7 +248,7 @@ def _votes(poll: dict) -> str:
     scale = max(poll["counts"].values(), default=0)
     top = _top_count(poll)
     cells = []
-    for slot in poll["slots"]:
+    for slot in ALL_OPTIONS:
         count = poll["counts"].get(slot, 0)
         css = ' class="top"' if slot != UNAVAILABLE and top and count == top else ""
         width = round(100 * count / scale) if scale else 0

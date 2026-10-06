@@ -21,13 +21,9 @@ from database.online_retro_poll import (
     save_vote,
 )
 
-TIME_SLOTS = [
-    "18:00~19:00",
-    "19:00~20:00",
-    "20:00~21:00",
-    "21:00~22:00",
-    "22:00~23:00",
-]
+# 일요일에만 모이므로 오후부터 고르게 한다. Slack 체크박스는 10개까지라
+# 1시간 단위로는 13시가 가장 이른 시작이다.
+TIME_SLOTS = [f"{hour:02d}:00~{hour + 1:02d}:00" for hour in range(13, 23)]
 # 투표 기록에 저장되는 값이라 바꾸지 않는다. 화면에는 UNAVAILABLE_LABEL로 보인다.
 UNAVAILABLE = "이번 회차 참여 어려움"
 UNAVAILABLE_LABEL = "이번엔 어려워요"
