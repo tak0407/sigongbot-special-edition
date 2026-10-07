@@ -16,7 +16,7 @@ from config import settings
 from dashboard import layout
 from dashboard.auth import csrf_token, require_admin
 from dashboard.common import to_kst
-from dashboard.directory import SLACK_CLIENT, channel_cell, get_directory
+from dashboard.directory import SLACK_CLIENT, channel_cell, get_directory, user_label
 from database.online_retro_confirmation import get_confirmation
 from database.online_retro_poll import get_poll, list_polls
 from slack.events.online_retro_confirmation import (
@@ -243,21 +243,62 @@ def _top_count(poll: dict) -> int:
     return max(poll["counts"].get(slot, 0) for slot in TIME_SLOTS)
 
 
-def _votes(poll: dict) -> str:
-    """시간대별 득표를 한 줄씩. 가장 많이 고른 시간은 강조한다."""
+def _votes(poll: dict, directory: dict) -> str:
+    """시간대별 득표를 한 줄씩. 가장 많이 고른 시간은 강조하고, 시간대에 마우스를
+    올리면 그 시간을 고른 사람이 보인다."""
     scale = max(poll["counts"].values(), default=0)
     top = _top_count(poll)
     cells = []
     for slot in ALL_OPTIONS:
         count = poll["counts"].get(slot, 0)
         css = ' class="top"' if slot != UNAVAILABLE and top and count == top else ""
+        names = sorted(
+            user_label(directory, user_id)
+            for user_id, chosen in poll["votes"].items()
+            if slot in chosen
+        )
+        title = f' title="{escape(", ".join(names))}"' if names else ""
         width = round(100 * count / scale) if scale else 0
         cells.append(
-            f"<span{css}>{escape(UNAVAILABLE_LABEL if slot == UNAVAILABLE else slot)}</span>"
+            f"<span{css}{title}>{escape(UNAVAILABLE_LABEL if slot == UNAVAILABLE else slot)}</span>"
             f'<span class="bar"><span style="width:{width}%"></span></span>'
             f"<span{css}>{count}명</span>"
         )
     return f'<div class="votes">{"".join(cells)}</div>'
+
+
+def _short_slot(slot: str) -> str:
+    """'19:00~20:00' → '19시'."""
+    return UNAVAILABLE_LABEL if slot == UNAVAILABLE else f"{int(slot[:2])}시"
+
+
+def _voters(poll: dict, directory: dict) -> str:
+    """사람별로 고른 시간과 아직 응답하지 않은 팀원. 관리자 화면에만 보인다."""
+    order = {slot: index for index, slot in enumerate(ALL_OPTIONS)}
+    answered = sorted(
+        (
+            user_label(directory, user_id),
+            ", ".join(
+                _short_slot(slot)
+                for slot in sorted(chosen, key=lambda slot: order.get(slot, len(order)))
+            ),
+        )
+        for user_id, chosen in poll["votes"].items()
+    )
+    waiting = sorted(
+        user_label(directory, user_id)
+        for user_id, channel in settings.SUBMISSION_DESTINATIONS.items()
+        if channel == poll["team_channel"] and user_id not in poll["votes"]
+    )
+    if not answered and not waiting:
+        return ""
+    summary = f"응답 {len(answered)}명" + (f" · 미응답 {len(waiting)}명" if waiting else "")
+    items = "".join(f"<li><b>{escape(name)}</b> {escape(chosen)}</li>" for name, chosen in answered)
+    missing = f'<div class="meta">미응답: {escape(", ".join(waiting))}</div>' if waiting else ""
+    return (
+        f'<details class="voters"><summary>{summary}</summary>'
+        f"{f'<ul>{items}</ul>' if items else ''}{missing}</details>"
+    )
 
 
 def _confirm_controls(poll: dict, confirmation: dict | None, csrf: str) -> str:
@@ -334,7 +375,8 @@ def _team_card(poll: dict, directory: dict, csrf: str) -> str:
     return f"""<article class="retro-team">
 <h3>{escape(poll['team_name'])} {_status_pill(confirmation)}</h3>
 <div class="meta">{channel_cell(directory, poll['team_channel'])} · {responded}</div>
-{_votes(poll)}
+{_votes(poll, directory)}
+{_voters(poll, directory)}
 {controls}
 {_confirmation_detail(confirmation)}
 </article>"""

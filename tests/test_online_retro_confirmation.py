@@ -1092,6 +1092,26 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
         # setUp 투표는 20:00~21:00이 2표로 가장 많다.
         self.assertIn('<option value="20:00~21:00" selected>', body)
 
+    async def test_card_shows_who_chose_what_and_who_has_not_answered(self):
+        self.slack.users_list.return_value = {
+            "members": [
+                {"id": "U11111111", "profile": {"display_name": "민수"}},
+                {"id": "U22222222", "profile": {"display_name": "영희"}},
+                {"id": "U33333333", "profile": {"display_name": "철수"}},
+            ]
+        }
+        with patch.object(
+            settings,
+            "SUBMISSION_DESTINATIONS",
+            {"U11111111": "C11111111", "U22222222": "C11111111", "U33333333": "C11111111"},
+        ):
+            body = await (await self.client.get("/online-retro", headers=self._headers())).text()
+        self.assertIn("<summary>응답 2명 · 미응답 1명</summary>", body)
+        self.assertIn("<li><b>민수</b> 20시</li>", body)
+        self.assertIn("<li><b>영희</b> 20시, 21시</li>", body)
+        self.assertIn("미응답: 철수", body)
+        self.assertIn('title="민수, 영희">20:00~21:00</span>', body)
+
     async def test_afternoon_votes_show_on_polls_made_before_the_change(self):
         older_slots = ["18:00~19:00", "19:00~20:00", "20:00~21:00", "21:00~22:00", "22:00~23:00", UNAVAILABLE]
         with get_connection() as connection:
@@ -1101,7 +1121,7 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
             )
         await save_vote(poll_id=self.poll_id, user_id="U33333333", slots=["14:00~15:00"])
         body = await (await self.client.get("/online-retro", headers=self._headers())).text()
-        self.assertIn("<span>14:00~15:00</span>", body)
+        self.assertIn('title="U33333333">14:00~15:00</span>', body)
         self.assertIn('<option value="13:00~14:00">', body)
         polls = {poll["id"]: poll for poll in await list_polls()}
         self.assertEqual(polls[self.poll_id]["counts"]["14:00~15:00"], 1)

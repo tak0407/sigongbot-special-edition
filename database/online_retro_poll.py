@@ -153,7 +153,7 @@ async def get_vote(poll_id: int, user_id: str) -> list[str]:
 
 
 async def list_polls() -> list[dict]:
-    """관리자 화면용. 투표별 슬롯 집계와 참여 인원을 함께 돌려준다."""
+    """관리자 화면용. 투표별 슬롯 집계, 참여 인원, 사람별 선택을 함께 돌려준다."""
 
     def select() -> list[dict]:
         with get_connection() as connection:
@@ -166,21 +166,23 @@ async def list_polls() -> list[dict]:
                     """
                 )
             ]
-            votes: dict[int, list[str]] = {}
+            votes: dict[int, dict[str, list[str]]] = {}
             for row in connection.execute(
-                "SELECT poll_id, slots_json FROM online_retro_time_votes"
+                "SELECT poll_id, user_id, slots_json FROM online_retro_time_votes"
             ):
-                votes.setdefault(row["poll_id"], []).append(row["slots_json"])
+                votes.setdefault(row["poll_id"], {})[row["user_id"]] = json.loads(
+                    row["slots_json"]
+                )
         for poll in polls:
             poll["slots"] = json.loads(poll.pop("slots_json"))
+            poll["votes"] = votes.get(poll["id"], {})
             counts = {slot: 0 for slot in poll["slots"]}
-            raw_votes = votes.get(poll["id"], [])
-            for payload in raw_votes:
+            for chosen in poll["votes"].values():
                 # 시간대 목록이 바뀐 뒤 예전 투표에 들어온 응답도 센다.
-                for slot in json.loads(payload):
+                for slot in chosen:
                     counts[slot] = counts.get(slot, 0) + 1
             poll["counts"] = counts
-            poll["voters"] = len(raw_votes)
+            poll["voters"] = len(poll["votes"])
         return polls
 
     return await asyncio.to_thread(select)

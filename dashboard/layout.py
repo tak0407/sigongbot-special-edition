@@ -247,6 +247,8 @@ h2.retro-date small{font-size:13px;font-weight:500}
 .retro-team form button{flex:1 1 auto}
 .retro-team form.inline{justify-content:flex-end}
 .retro-team form.inline button{flex:0 0 auto}
+.retro-team details.voters summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--brand-dark)}
+.retro-team details.voters ul{margin:6px 0 4px;padding-left:18px;font-size:13px;line-height:1.7}
 .retro-targets{margin:4px 0 0;padding-left:18px;line-height:1.8}
 @media(max-width:980px){.side{flex-basis:224px}main{padding:30px 24px 56px}}
 @media(max-width:760px){
