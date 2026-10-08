@@ -74,6 +74,28 @@ def _team_size(team_channel: str) -> int:
     )
 
 
+def poll_actions(poll_id: int) -> dict:
+    """투표 버튼. 공지와 미응답 DM에 같이 달고, 누른 사람의 팀 투표로 기록된다."""
+    return {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "action_id": "open_online_retro_time_poll",
+                "text": {"type": "plain_text", "text": "가능한 시간 고르기"},
+                "style": "primary",
+                "value": str(poll_id),
+            },
+            {
+                "type": "button",
+                "action_id": "mark_online_retro_unavailable",
+                "text": {"type": "plain_text", "text": UNAVAILABLE_LABEL},
+                "value": str(poll_id),
+            },
+        ],
+    }
+
+
 def build_poll_blocks(polls: list[dict]) -> list[dict]:
     """공지 하나에 묶인 팀 투표들. 시간은 팀마다 따로 정하므로 응답 현황만 보여 준다."""
     first = polls[0]
@@ -105,24 +127,7 @@ def build_poll_blocks(polls: list[dict]) -> list[dict]:
                 "text": "*응답 현황*  " + " · ".join(progress(poll) for poll in polls),
             },
         },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "action_id": "open_online_retro_time_poll",
-                    "text": {"type": "plain_text", "text": "가능한 시간 고르기"},
-                    "style": "primary",
-                    "value": str(first["id"]),
-                },
-                {
-                    "type": "button",
-                    "action_id": "mark_online_retro_unavailable",
-                    "text": {"type": "plain_text", "text": UNAVAILABLE_LABEL},
-                    "value": str(first["id"]),
-                },
-            ],
-        },
+        poll_actions(first["id"]),
         {
             "type": "context",
             "elements": [

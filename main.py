@@ -28,6 +28,9 @@ try:
     from slack.event_handler import app as slack_app
     from slack.session_announcement import run_session_announcement_scheduler
     from slack.events.online_retro_meeting import run_online_retro_meeting_scheduler
+    from slack.events.online_retro_poll_reminder import (
+        run_online_retro_poll_reminder_scheduler,
+    )
     from slack.events.unsubmitted_reminder import (
         run_unsubmitted_reminder_scheduler,
     )
@@ -109,6 +112,12 @@ async def main():
     auto_pass_task = asyncio.create_task(
         supervise("자동 패스 스케줄러", run_auto_pass_scheduler)
     ) if settings.ENV == "prod" and settings.SUBMISSION_DESTINATIONS else None
+    poll_reminder_task = asyncio.create_task(
+        supervise(
+            "투표 미응답 DM 스케줄러",
+            lambda: run_online_retro_poll_reminder_scheduler(slack_app.client),
+        )
+    ) if settings.ENV == "prod" and settings.SUBMISSION_DESTINATIONS else None
 
     try:
         # HTTP 서버 시작
@@ -135,6 +144,9 @@ async def main():
         if auto_pass_task:
             auto_pass_task.cancel()
             tasks.append(auto_pass_task)
+        if poll_reminder_task:
+            poll_reminder_task.cancel()
+            tasks.append(poll_reminder_task)
         await asyncio.gather(*tasks, return_exceptions=True)
         await handler.close_async()
         await runner.cleanup()

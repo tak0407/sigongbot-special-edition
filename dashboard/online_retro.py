@@ -36,6 +36,7 @@ from slack.events.online_retro_poll import (
     meeting_day,
     post_time_poll,
 )
+from slack.events.online_retro_poll_reminder import reminded_users, reminder_at
 from utils import get_current_session_info, tz_now
 
 PAGE_PATH = "/online-retro"
@@ -177,8 +178,10 @@ def _team_labels(channels: list[str], directory: dict, polls: list[dict]) -> dic
 
 async def _collect() -> list[dict]:
     polls = await list_polls()
+    reminded = await reminded_users()
     for poll in polls:
         poll["confirmation"] = await get_confirmation(poll["id"])
+        poll["reminded"] = reminded.get(poll["id"], set())
     return polls
 
 
@@ -382,6 +385,21 @@ def _team_card(poll: dict, directory: dict, csrf: str) -> str:
 </article>"""
 
 
+def _reminder_note(polls: list[dict]) -> str:
+    """미응답 DM을 보낼 시각, 보낸 뒤에는 보낸 인원. 테스트 투표는 DM을 보내지 않는다."""
+    first = polls[0]
+    if first["is_test"]:
+        return ""
+    at = reminder_at(first["meeting_date"])
+    when = f"{meeting_day(at.date().isoformat())} {at:%H:%M}"
+    sent = sum(len(poll["reminded"]) for poll in polls)
+    if sent:
+        return f"<small>미응답 DM {sent}명 보냄 · {escape(when)}</small>"
+    if tz_now() < at:
+        return f"<small>미응답 DM {escape(when)} 예정</small>"
+    return f"<small>미응답 DM 보낸 사람 없음 · {escape(when)}</small>"
+
+
 def _date_block(polls: list[dict], directory: dict, csrf: str) -> str:
     """모임 하루치. 팀 카드를 나란히 놓아 한눈에 비교한다."""
     first = polls[0]
@@ -395,7 +413,7 @@ def _date_block(polls: list[dict], directory: dict, csrf: str) -> str:
     return (
         f'<h2 class="retro-date">{escape(meeting_day(first["meeting_date"]))} · '
         f'{escape(first["session_name"])}{test_mark}'
-        f"<small>확정 {confirmed}/{len(polls)}팀</small></h2>"
+        f"<small>확정 {confirmed}/{len(polls)}팀</small>{_reminder_note(polls)}</h2>"
         f'<div class="retro-teams">{cards}</div>'
     )
 
@@ -416,7 +434,7 @@ def _poll_sections(polls: list[dict], directory: dict, csrf: str) -> str:
         f"<section>{_date_block(groups[key], directory, csrf)}</section>" for key in upcoming
     )
     if not upcoming:
-        html = "<p>다가오는 모임의 시간 투표가 없습니다. <b>투표 올리기</b>로 팀 채널에 투표를 올리세요.</p>"
+        html = "<p>다가오는 모임의 시간 투표가 없습니다. <b>투표 올리기</b>로 공지 채널에 투표를 올리세요.</p>"
     for title, keys in (("지난 투표", past), ("테스트 투표", tests)):
         if keys:
             count = sum(len(groups[key]) for key in keys)

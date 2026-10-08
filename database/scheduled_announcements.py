@@ -26,3 +26,20 @@ async def mark_announcement_sent(announcement_key: str) -> None:
             )
 
     await asyncio.to_thread(insert)
+
+
+async def sent_keys(prefix: str) -> list[str]:
+    """prefix로 시작하는 발송 기록 키. LIKE 와일드카드에 걸리지 않게 앞부분을 그대로 비교한다."""
+
+    def select() -> list[str]:
+        with get_connection() as connection:
+            return [
+                row[0]
+                for row in connection.execute(
+                    "SELECT announcement_key FROM scheduled_announcements"
+                    " WHERE substr(announcement_key, 1, ?) = ?",
+                    (len(prefix), prefix),
+                )
+            ]
+
+    return await asyncio.to_thread(select)

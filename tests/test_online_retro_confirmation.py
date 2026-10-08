@@ -32,6 +32,7 @@ from database.online_retro_poll import (
     mark_poll_posted,
     save_vote,
 )
+from database.scheduled_announcements import mark_announcement_sent
 from database.sqlite import get_connection, initialize_database
 from google_workspace import calendar_meet
 from google_workspace.calendar_meet import (
@@ -51,6 +52,7 @@ from slack.events.online_retro_meeting import (
     handle_online_retro_attendance,
 )
 from slack.events.online_retro_poll import ALL_OPTIONS, DEFAULT_POLL_INTRO, UNAVAILABLE
+from slack.events.online_retro_poll_reminder import reminder_key
 
 KST = ZoneInfo("Asia/Seoul")
 CHANNEL_NAMES = {
@@ -1111,6 +1113,14 @@ class ConfirmationDashboardTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<li><b>영희</b> 20시, 21시</li>", body)
         self.assertIn("미응답: 철수", body)
         self.assertIn('title="민수, 영희">20:00~21:00</span>', body)
+
+    async def test_date_heading_shows_when_unanswered_members_get_a_dm(self):
+        body = await (await self.client.get("/online-retro", headers=self._headers())).text()
+        self.assertIn("<small>미응답 DM 10월 9일(금) 20:00 예정</small>", body)
+
+        await mark_announcement_sent(reminder_key(self.poll_id, "U33333333"))
+        body = await (await self.client.get("/online-retro", headers=self._headers())).text()
+        self.assertIn("<small>미응답 DM 1명 보냄 · 10월 9일(금) 20:00</small>", body)
 
     async def test_afternoon_votes_show_on_polls_made_before_the_change(self):
         older_slots = ["18:00~19:00", "19:00~20:00", "20:00~21:00", "21:00~22:00", "22:00~23:00", UNAVAILABLE]
