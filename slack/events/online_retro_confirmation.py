@@ -32,6 +32,7 @@ from google_workspace.calendar_meet import (
 )
 from google_workspace.oauth import GoogleAuthError
 from slack.events.online_retro_poll import TIME_SLOTS, WEEKDAYS
+from utils import tz_now
 
 # 이 주소들만 Google 계정이 확실하다. 다른 도메인은 Google 계정인지 알 수 없어
 # ONLINE_RETRO_TEAM_ATTENDEES로만 받는다.
@@ -120,40 +121,66 @@ def _attendance_value(confirmation: dict) -> str:
     )
 
 
-def build_confirmation_blocks(confirmation: dict) -> list[dict]:
+def buttons_open_at(starts_at: datetime.datetime) -> datetime.datetime:
+    """입장·출석 버튼이 열리는 시각. 팀 채널에 시작 N분 전 공지가 나갈 때와 같다."""
+    return starts_at - datetime.timedelta(minutes=settings.ONLINE_RETRO_NOTIFY_MINUTES_BEFORE)
+
+
+def build_confirmation_blocks(
+    confirmation: dict, *, now: datetime.datetime | None = None
+) -> list[dict]:
+    """확정 공지. 미리 출석하거나 빈 회의실에 들어가지 않도록 버튼은 시작 N분 전에 단다.
+
+    Slack 버튼은 비활성으로 보여 줄 수 없어서, 그 전에는 버튼 없이 열리는 시각만 알린다.
+    """
     starts_at = datetime.datetime.fromisoformat(confirmation["starts_at"])
     ends_at = datetime.datetime.fromisoformat(confirmation["ends_at"])
+    opens_at = buttons_open_at(starts_at)
+    is_open = (now or tz_now()) >= opens_at
     prefix = "*[테스트]* 🧪\n\n" if confirmation["is_test"] else ""
-    return [
+    guide = (
+        "아래 버튼으로 출석 체크하고 Google Meet에 입장해 주세요."
+        if is_open
+        else (
+            "`Google Meet 입장`과 `출석 체크` 버튼은 "
+            f"시작 {settings.ONLINE_RETRO_NOTIFY_MINUTES_BEFORE}분 전인 "
+            f"{opens_at:%H:%M}에 이 메시지에 열려요."
+        )
+    )
+    blocks = [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": (
                     f"{prefix}*{confirmation['team_name']} 온라인 회고 시간이 확정됐어요!* 🙌\n"
-                    f"{format_meeting_time(starts_at, ends_at)}\n"
-                    "아래 버튼으로 Google Meet에 입장해 주세요."
+                    f"{format_meeting_time(starts_at, ends_at)}\n{guide}"
                 ),
             },
         },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "action_id": "open_online_retro_meeting",
-                    "text": {"type": "plain_text", "text": "Google Meet 입장"},
-                    "style": "primary",
-                    "url": confirmation["meet_url"],
-                },
-                {
-                    "type": "button",
-                    "action_id": "attend_online_retro_meeting",
-                    "text": {"type": "plain_text", "text": "출석 체크"},
-                    "value": _attendance_value(confirmation),
-                },
-            ],
-        },
+    ]
+    if is_open:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": "open_online_retro_meeting",
+                        "text": {"type": "plain_text", "text": "Google Meet 입장"},
+                        "style": "primary",
+                        "url": confirmation["meet_url"],
+                    },
+                    {
+                        "type": "button",
+                        "action_id": "attend_online_retro_meeting",
+                        "text": {"type": "plain_text", "text": "출석 체크"},
+                        "value": _attendance_value(confirmation),
+                    },
+                ],
+            }
+        )
+    return blocks + [
         {
             "type": "context",
             "elements": [

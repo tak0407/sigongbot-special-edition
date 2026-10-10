@@ -15,9 +15,11 @@ from database.online_retro_attendance import (
     record_attendance,
 )
 from database.online_retro_confirmation import find_confirmation, list_confirmed
+from database.online_retro_poll import get_poll
 from database.retrospective import get_submitted_user_ids
 from database.scheduled_announcements import announcement_sent, mark_announcement_sent
 from slack.ephemeral import post_ephemeral
+from slack.events.online_retro_confirmation import post_confirmation_announcement
 from utils import tz_now
 
 LATE_ANNOUNCEMENT_GRACE = datetime.timedelta(hours=1)
@@ -143,6 +145,37 @@ async def post_online_retro_announcement(
     await mark_announcement_sent(key)
 
 
+async def open_confirmation_buttons(
+    client: AsyncWebClient, meeting: OnlineRetroMeeting
+) -> None:
+    """시작 N분 전 팀 채널 공지와 함께, 미리 올라간 확정 공지에도 입장·출석 버튼을 단다.
+
+    확정 공지를 못 고쳐도 팀 채널 공지에 같은 버튼이 있다. 실패가 매분 반복되며
+    당일 진행을 막지 않도록 한 번만 시도한다.
+    """
+    key = _phase_key(meeting, "confirmation-buttons")
+    if await announcement_sent(key):
+        return
+    confirmation = await find_confirmation(
+        session_name=meeting.session_name, team_channel=meeting.channel
+    )
+    if not confirmation or not confirmation.get("announced_slack_ts"):
+        return
+    try:
+        poll = await get_poll(confirmation["poll_id"])
+        await post_confirmation_announcement(
+            client,
+            confirmation,
+            channel=(poll or {}).get("message_channel") or confirmation["team_channel"],
+        )
+    except Exception:
+        logger.exception(
+            "확정 공지에 입장·출석 버튼을 달지 못했습니다 - session={}",
+            meeting.session_name,
+        )
+    await mark_announcement_sent(key)
+
+
 def build_writing_blocks(meeting: OnlineRetroMeeting) -> list[dict]:
     ends_at = meeting.starts_at + datetime.timedelta(minutes=meeting.writing_minutes)
     submission = json.dumps(
@@ -246,7 +279,8 @@ async def handle_online_retro_attendance(
     metadata = json.loads(body["actions"][0]["value"])
     session_name = str(metadata.get("session_name") or "").strip()
     team_channel = str(metadata.get("team_channel") or "").strip()
-    if not session_name or await _meeting(session_name, team_channel) is None:
+    meeting = await _meeting(session_name, team_channel) if session_name else None
+    if meeting is None:
         raise ValueError("현재 설정된 온라인 회고 모임을 찾을 수 없어요.")
     user_id = body["user"]["id"]
     # 확정 공지가 공지 채널에 모여 다른 팀 출석 버튼도 보인다. 팀 모임에는 그 팀원만
@@ -258,6 +292,20 @@ async def handle_online_retro_attendance(
             channel=body["channel"]["id"],
             user=user_id,
             text="다른 팀 모임이에요. 자기 팀 확정 공지에서 출석 체크해 주세요.",
+        )
+        return
+    # 새 확정 공지는 이때까지 버튼이 없지만, 예전 메시지에 남은 버튼도 같은 시각까지 막는다.
+    if tz_now() < meeting.notify_at:
+        opens_at = meeting.notify_at
+        await post_ephemeral(
+            client,
+            channel=body["channel"]["id"],
+            user=user_id,
+            text=(
+                "출석 체크는 "
+                f"<!date^{int(opens_at.timestamp())}^{{date_short_pretty}} {{time}}|"
+                f"{opens_at:%m/%d %H:%M}>부터 할 수 있어요."
+            ),
         )
         return
     created = await record_attendance(
@@ -515,6 +563,7 @@ async def run_online_retro_meeting_scheduler(client: AsyncWebClient) -> None:
                     < meeting.starts_at + LATE_ANNOUNCEMENT_GRACE
                 ):
                     await post_online_retro_announcement(client, meeting)
+                    await open_confirmation_buttons(client, meeting)
                 if (
                     meeting.starts_at <= local_now
                     < meeting.starts_at + LATE_ANNOUNCEMENT_GRACE
