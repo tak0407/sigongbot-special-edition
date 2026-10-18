@@ -216,21 +216,6 @@ async def handle_view_retrospective_submit(
                 ]
             )
 
-        # Footer 블록 생성
-        footer_blocks = [
-            DividerBlock(),
-            ContextBlock(
-                elements=[
-                    {
-                        "type": "mrkdwn",
-                        "text": f"회고에 문제가 있다면 <#{settings.SUPPORT_CHANNEL}>에 문의를 남겨 주세요.",
-                    }
-                ]
-            ),
-        ]
-
-        blocks.extend(footer_blocks)
-
         # Slack 게시보다 먼저 로컬 SQLite에 기록한다.
         # 저장이 실패하면 Slack에도 게시되지 않으므로 중복 게시가 생기지 않는다.
         try:

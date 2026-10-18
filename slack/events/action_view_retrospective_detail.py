@@ -10,7 +10,6 @@ from slack_sdk.models.blocks import (
 from loguru import logger
 
 from database.retrospective import get_retrospective_by_id
-from config import settings
 
 
 async def handle_action_view_retrospective_detail(
@@ -87,21 +86,6 @@ async def handle_action_view_retrospective_detail(
             # 감정 이유가 있는 경우 추가
             if retrospective.get("emotion_reason"):
                 blocks.append(SectionBlock(text=retrospective["emotion_reason"]))
-
-        # Footer 블록 추가
-        blocks.extend(
-            [
-                DividerBlock(),
-                ContextBlock(
-                    elements=[
-                        {
-                            "type": "mrkdwn",
-                            "text": f"회고에 문제가 있다면 <#{settings.SUPPORT_CHANNEL}>에 문의를 남겨 주세요.",
-                        }
-                    ]
-                ),
-            ]
-        )
 
         # 상세 모달 표시 (views_push 사용)
         await client.views_push(

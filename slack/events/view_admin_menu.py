@@ -488,21 +488,6 @@ async def handle_view_admin_edit_retrospective(
                 if "emotion_reason" in update_data and update_data["emotion_reason"]:
                     blocks.append(SectionBlock(text=update_data["emotion_reason"]))
 
-            # Footer 블록 생성
-            footer_blocks = [
-                DividerBlock(),
-                ContextBlock(
-                    elements=[
-                        {
-                            "type": "mrkdwn",
-                            "text": f"회고에 문제가 있다면 <#{settings.SUPPORT_CHANNEL}>에 문의를 남겨 주세요.",
-                        }
-                    ]
-                ),
-            ]
-
-            blocks.extend(footer_blocks)
-
             # 업데이트된 블록으로 메시지 수정
             await client.chat_update(
                 channel=slack_channel,
