@@ -11,11 +11,12 @@ from html import escape
 from aiohttp import web
 
 from config import settings
-from constants import DUE_DATES, MAX_PASS_COUNT, SESSION_NAMES
+from constants import MAX_PASS_COUNT
 from dashboard import directory as slack_directory
 from dashboard import layout
 from dashboard.auth import require_admin
 from dashboard.common import rows, to_kst, separate_submission_badge
+from database.sessions import load_schedule
 from database.sqlite import get_connection
 from database.submission_stats import separate_submitter_ids
 from utils import get_current_session_info, tz_now
@@ -34,24 +35,6 @@ def _cohort(name: str) -> str:
     return matched.group(1) if matched else "초기"
 
 
-def _finished_sessions(current_name: str, now) -> list[str]:
-    """현재 기수에서 마감이 지난 회차를 오래된 순으로 돌려준다.
-
-    기수마다 인원이 달라 지난 기수까지 섞으면 제출률이 무의미해진다.
-    진행 중인 회차는 아직 낼 기회가 남아 있으므로 분모에서 뺀다.
-    """
-    cohort = _cohort(current_name or SESSION_NAMES[-1])
-    return [
-        name
-        for name, due in zip(SESSION_NAMES, DUE_DATES)
-        if due <= now and _cohort(name) == cohort
-    ]
-
-
-def _session_order(name: str) -> int:
-    return SESSION_NAMES.index(name) if name in SESSION_NAMES else len(SESSION_NAMES)
-
-
 def _streak(sessions: list[str], submitted: set[str]) -> int:
     """마감이 지난 회차를 최신순으로 훑어 연속 미제출 횟수를 센다."""
     count = 0
@@ -62,29 +45,57 @@ def _streak(sessions: list[str], submitted: set[str]) -> int:
     return count
 
 
-def _collect() -> dict:
+def _collect(cohort: str = "") -> dict:
     now = tz_now()
     _, current_name, _, is_active = get_current_session_info()
-    sessions = _finished_sessions(current_name, now)
-    scope = set(sessions)
+    names, dues = load_schedule()
+    current_cohort = _cohort(current_name or (names[-1] if names else ""))
     destinations = dict(settings.SUBMISSION_DESTINATIONS)
 
     with get_connection() as connection:
+        recorded_names = [
+            row["session_name"]
+            for row in connection.execute(
+                "SELECT DISTINCT session_name FROM retrospectives WHERE is_test_submission = 0"
+            )
+        ]
+        cohorts = sorted(
+            {_cohort(name) for name in [*names, *recorded_names]} | {current_cohort},
+            key=lambda name: int(name[:-1]) if name != "초기" else 0,
+            reverse=True,
+        )
+        if cohort not in cohorts:
+            cohort = current_cohort
+        selected_names = [name for name in recorded_names if _cohort(name) == cohort]
         # 테스트 제출은 참여 이력에서 제외한다. 최신순으로 받아 두면 사용자별
         # 첫 행이 곧 마지막 제출이라 MAX()의 동점 처리에 기대지 않아도 된다.
-        records = connection.execute(
-            """
-            SELECT user_id, session_name, created_at
-              FROM retrospectives
-             WHERE is_test_submission = 0
-             ORDER BY created_at DESC, id DESC
-            """
-        ).fetchall()
+        records = []
+        if selected_names:
+            placeholders = ",".join("?" for _ in selected_names)
+            records = connection.execute(
+                f"""
+                SELECT user_id, session_name, slack_channel, created_at
+                  FROM retrospectives
+                 WHERE is_test_submission = 0
+                   AND session_name IN ({placeholders})
+                 ORDER BY created_at DESC, id DESC
+                """,
+                selected_names,
+            ).fetchall()
         pass_rows = connection.execute(
             "SELECT user_id, session_name, source FROM session_passes WHERE cohort = ?",
-            (_cohort(current_name or SESSION_NAMES[-1]),),
+            (cohort,),
         ).fetchall()
 
+    # 일정 편집 결과를 반영하고, 아직 제출할 수 있는 회차는 분모에서 뺀다.
+    sessions = [
+        name
+        for name, due in zip(names, dues)
+        if due <= now and _cohort(name) == cohort
+    ]
+    scope = set(sessions)
+    session_order = {name: index for index, name in enumerate(names)}
+    is_current_cohort = cohort == current_cohort
     submitted: dict[str, set[str]] = {}
     last_by_user: dict[str, dict] = {}
     for row in records:
@@ -95,8 +106,11 @@ def _collect() -> dict:
     for row in pass_rows:
         passes.setdefault(row["user_id"], {})[row["session_name"]] = row["source"]
 
-    # 명단에 없는 제출자(테스트 계정, 배정 누락)도 실제 참여자이므로 함께 센다.
-    user_ids = set(destinations) | set(submitted)
+    # 현재 기수는 미제출자도 볼 수 있도록 운영 명단을 포함한다. 이전 기수의
+    # 명단은 보관하지 않으므로 그 기수에 실제 제출한 사람만 보여 준다.
+    user_ids = set(submitted)
+    if is_current_cohort:
+        user_ids |= set(destinations)
     members = []
     for user_id in user_ids:
         mine = submitted.get(user_id, set())
@@ -107,7 +121,11 @@ def _collect() -> dict:
         members.append(
             {
                 "user_id": user_id,
-                "channel": destinations.get(user_id, ""),
+                "channel": (
+                    destinations.get(user_id, "")
+                    if is_current_cohort
+                    else last["slack_channel"]
+                ),
                 "done": len(done),
                 "total": len(sessions),
                 "rate": len(done) / len(sessions) if sessions else 0.0,
@@ -118,7 +136,8 @@ def _collect() -> dict:
                 ],
                 # 진행 중인 회차에 버튼으로 쓴 패스도 함께 보이도록 회차 순으로 둔다.
                 "passes": sorted(
-                    passed.items(), key=lambda item: _session_order(item[0])
+                    passed.items(),
+                    key=lambda item: session_order.get(item[0], len(names)),
                 ),
                 "current_done": bool(current_name and current_name in mine),
                 "last_session": last["session_name"] if last else "",
@@ -141,14 +160,34 @@ def _collect() -> dict:
         "members": members,
         "counted": len(counted),
         "sessions": sessions,
+        "cohort": cohort,
+        "cohorts": cohorts,
+        "current_cohort": current_cohort,
+        "is_current_cohort": is_current_cohort,
         "current_name": current_name,
-        "is_active": is_active,
-        "roster": len(destinations),
+        "is_active": is_active and is_current_cohort,
+        "roster": len(destinations) if is_current_cohort else 0,
         "at_risk": len(at_risk),
         "never": len(never),
         "average": average,
         "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def _filter_form(data: dict) -> str:
+    options = []
+    for cohort in data["cohorts"]:
+        selected = " selected" if cohort == data["cohort"] else ""
+        label = f"{cohort} (현재)" if cohort == data["current_cohort"] else cohort
+        options.append(
+            f'<option value="{escape(cohort)}"{selected}>{escape(label)}</option>'
+        )
+    return (
+        '<form class="filters" method="get" action="/members">'
+        f'<select name="cohort" aria-label="기수 선택">{"".join(options)}</select>'
+        '<button type="submit">조회</button>'
+        '</form>'
+    )
 
 
 def _marks_cell(member: dict) -> str:
@@ -190,6 +229,7 @@ def _member_rows(data: dict, directory: dict) -> str:
             current = '<span class="done">제출</span>'
         else:
             current = '<span class="pill pending">미제출</span>'
+        current_cell = f"<td>{current}</td>" if data["is_current_cohort"] else ""
 
         streak = member["streak"]
         if streak >= AT_RISK_MISSES:
@@ -214,7 +254,7 @@ def _member_rows(data: dict, directory: dict) -> str:
             "<tr>"
             f"<td>{slack_directory.user_cell(directory, member['user_id'])}{separate_submission_badge(member['user_id'])}</td>"
             f"<td>{team}</td>"
-            f"<td>{current}</td>"
+            f"{current_cell}"
             f"<td>{member['done']} / {member['total']}"
             f'<div class="sub">{round(member["rate"] * 100)}%</div></td>'
             f"<td>{streak_cell}</td>"
@@ -223,12 +263,16 @@ def _member_rows(data: dict, directory: dict) -> str:
             f"<td>{last}</td>"
             "</tr>"
         )
-    return rows(items, 8, "집계할 멤버가 없습니다. SUBMISSION_TEAMS를 확인하세요.")
+    return rows(
+        items,
+        8 if data["is_current_cohort"] else 7,
+        "선택한 기수에 집계할 멤버가 없습니다.",
+    )
 
 
 @require_admin
 async def handle(request: web.Request) -> web.Response:
-    data = await asyncio.to_thread(_collect)
+    data = await asyncio.to_thread(_collect, request.query.get("cohort", "").strip())
     channel_ids = {
         member["channel"] for member in data["members"] if member["channel"]
     }
@@ -241,17 +285,30 @@ async def handle(request: web.Request) -> web.Response:
     )
     at_risk_card = "card alert" if data["at_risk"] else "card"
     never_card = "card alert" if data["never"] else "card"
+    never = ""
+    if data["is_current_cohort"]:
+        basis = f"운영 명단 {data['roster']}명과 해당 기수 제출자를 집계합니다."
+        never = (
+            f'<div class="{never_card}">{escape(data["cohort"])} 제출 없음'
+            f'<div class="number">{data["never"]}명</div>'
+            '<small>해당 기수에 한 번도 제출하지 않음</small></div>'
+        )
+    else:
+        basis = "해당 기수에 제출한 멤버만 집계합니다. 팀은 마지막 제출 당시 채널입니다."
+    current_heading = "<th>이번 회차</th>" if data["is_current_cohort"] else ""
     body = f"""
+{_filter_form(data)}
+<p><small>{escape(basis)}</small></p>
 <section class="cards">
-<div class="card">집계 대상<div class="number">{data['counted']}명</div><small>명단 {data['roster']}명 · {escape(scope)}</small></div>
+<div class="card">집계 대상<div class="number">{data['counted']}명</div><small>{escape(data['cohort'])} · {escape(scope)}</small></div>
 <div class="card">평균 제출률<div class="number">{data['average']}%</div><small>마감된 회차만 셉니다</small></div>
 <div class="{at_risk_card}">이탈 위험<div class="number">{data['at_risk']}명</div><small>{AT_RISK_MISSES}회 이상 연속 미제출</small></div>
-<div class="{never_card}">제출 이력 없음<div class="number">{data['never']}명</div><small>한 번도 제출하지 않음</small></div>
+{never}
 </section>
-<h2>멤버별 참여 이력</h2>
+<h2>{escape(data['cohort'])} 멤버별 참여 이력</h2>
 <small>연속 미제출이 긴 순서입니다. 점은 최근 {RECENT_MARKS}개 회차이고, 왼쪽이 오래된 회차입니다. 점에 마우스를 올리면 회차 이름이 보입니다. 주황 점은 직접 쓴 패스, 회색 테두리 점은 미제출로 자동 처리된 패스입니다.</small>
 <p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr>
-<th>멤버</th><th>팀</th><th>이번 회차</th><th>제출</th><th>연속 미제출</th><th>최근 회차</th><th>패스</th><th>마지막 제출</th>
+<th>멤버</th><th>팀</th>{current_heading}<th>제출</th><th>연속 미제출</th><th>최근 회차</th><th>패스</th><th>마지막 제출</th>
 </tr></thead><tbody>{_member_rows(data, directory)}</tbody></table></div>
 """
     return web.Response(

@@ -17,6 +17,7 @@ from dashboard import auth
 from dashboard import directory as slack_directory
 from dashboard import members
 from dashboard import overview
+from database.sessions import invalidate
 from database.sqlite import get_connection, initialize_database
 
 
@@ -574,8 +575,21 @@ class MembersTabTest(AdminWebTestCase):
             datetime.datetime(2026, 9, 11, 5, 0, tzinfo=seoul),
             datetime.datetime(2026, 12, 31, 5, 0, tzinfo=seoul),
         ]
-        self.enterContext(patch.object(members, "SESSION_NAMES", names))
-        self.enterContext(patch.object(members, "DUE_DATES", dues))
+        with get_connection() as connection:
+            connection.execute("DELETE FROM sessions")
+            connection.executemany(
+                "INSERT INTO sessions (name, due_at) VALUES (?, ?)",
+                [(name, due.isoformat()) for name, due in zip(names, dues)],
+            )
+        invalidate()
+        self.enterContext(patch.object(settings, "SESSION_NAME_OVERRIDE", "6기 3회차"))
+        self.enterContext(
+            patch.object(
+                members,
+                "tz_now",
+                return_value=datetime.datetime(2026, 9, 12, 12, 0, tzinfo=seoul),
+            )
+        )
 
     async def test_counts_streak_and_rate_over_finished_sessions(self):
         self._patch_sessions()
@@ -596,27 +610,103 @@ class MembersTabTest(AdminWebTestCase):
         by_id = {member["user_id"]: member for member in data["members"]}
         self.assertEqual(by_id["U22222222"]["done"], 0)
         self.assertEqual(by_id["U22222222"]["streak"], 2)
-        # 5기 제출뿐인 U33333333은 6기 분모에서 0/2이고 팀 미배정으로 잡힌다.
-        self.assertEqual(by_id["U33333333"]["channel"], "")
-        self.assertEqual(by_id["U33333333"]["done"], 0)
+        # 5기에만 제출한 사람은 현재 기수의 목록과 요약 지표에서 빠진다.
+        self.assertEqual(set(by_id), {"U11111111", "U22222222"})
+        self.assertEqual(data["counted"], 2)
+        self.assertEqual(data["average"], 25)
+        self.assertEqual(data["at_risk"], 1)
         # 분모는 마감된 6기 회차 2개뿐이다. 진행 중인 3회차는 빠진다.
         self.assertEqual(data["sessions"], ["6기 1회차", "6기 2회차"])
 
     async def test_survives_when_no_session_has_closed_yet(self):
         """6기 1회차 마감 전처럼 분모가 0인 시점에도 화면이 떠야 한다."""
-        seoul = ZoneInfo("Asia/Seoul")
-        self.enterContext(patch.object(members, "SESSION_NAMES", ["6기 1회차"]))
-        self.enterContext(
-            patch.object(
-                members,
-                "DUE_DATES",
-                [datetime.datetime(2026, 12, 31, 5, 0, tzinfo=seoul)],
+        self._patch_sessions()
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE sessions SET due_at = '2026-12-31T05:00:00+09:00' WHERE name LIKE '6기 %'"
             )
-        )
+        invalidate()
         response = await self._get("/members")
         self.assertEqual(response.status, 200)
         body = await response.text()
         self.assertIn("마감된 회차가 아직 없습니다", body)
+
+    async def test_current_cohort_keeps_roster_but_ignores_previous_history(self):
+        self._patch_sessions()
+        with get_connection() as connection:
+            connection.execute(
+                """INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item) VALUES ('U22222222', '5기 12회차', 'C22222222', '9.0', '', '', '', '')"""
+            )
+        data = await asyncio.to_thread(members._collect)
+        by_id = {member["user_id"]: member for member in data["members"]}
+        self.assertEqual(data["never"], 1)
+        self.assertEqual(by_id["U22222222"]["last_session"], "")
+        self.assertEqual(by_id["U22222222"]["last_at"], "")
+
+    async def test_previous_cohort_uses_only_its_submitters_and_team_history(self):
+        self._patch_sessions()
+        with get_connection() as connection:
+            connection.execute(
+                """INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item, created_at) VALUES ('U11111111', '5기 12회차', 'C33333333', '8.0', '', '', '', '', '2026-09-01 00:00:00')"""
+            )
+            connection.execute(
+                """INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item, is_test_submission) VALUES ('U44444444', '5기 12회차', 'C22222222', '9.0', '', '', '', '', 1)"""
+            )
+            connection.executemany(
+                "INSERT INTO session_passes (user_id, session_name, cohort, team_channel) VALUES (?, ?, ?, ?)",
+                [
+                    ('U11111111', '5기 12회차', '5기', 'C33333333'),
+                    ('U11111111', '6기 2회차', '6기', 'C11111111'),
+                    ('U22222222', '5기 12회차', '5기', 'C22222222'),
+                ],
+            )
+        data = await asyncio.to_thread(members._collect, "5기")
+        by_id = {member["user_id"]: member for member in data["members"]}
+        self.assertEqual(set(by_id), {"U11111111", "U33333333"})
+        self.assertEqual(data["sessions"], ["5기 12회차"])
+        self.assertEqual((data["counted"], data["average"], data["at_risk"]), (2, 100, 0))
+        self.assertFalse(data["is_active"])
+        self.assertEqual(by_id["U11111111"]["channel"], "C33333333")
+        self.assertEqual(by_id["U11111111"]["last_session"], "5기 12회차")
+        self.assertEqual(by_id["U11111111"]["passes"], [("5기 12회차", "manual")])
+
+    async def test_cohort_filter_changes_the_rendered_members(self):
+        self._patch_sessions()
+        current = await (await self._get("/members")).text()
+        self.assertIn('value="6기" selected', current)
+        self.assertNotIn("U33333333", current)
+        previous = await (await self._get("/members?cohort=5기")).text()
+        self.assertIn('value="5기" selected', previous)
+        self.assertIn("U33333333", previous)
+        self.assertIn("C22222222", previous)
+        self.assertNotIn("U11111111", previous)
+        self.assertNotIn("U22222222", previous)
+        self.assertNotIn("6기 1회차", previous)
+        self.assertIn("1 / 1", previous)
+        self.assertNotIn("<th>이번 회차</th>", previous)
+
+    async def test_unknown_cohort_falls_back_to_the_current_cohort(self):
+        self._patch_sessions()
+        response = await self._get("/members?cohort=없는기수")
+        self.assertEqual(response.status, 200)
+        body = await response.text()
+        self.assertIn('value="6기" selected', body)
+        self.assertIn("U22222222", body)
+        self.assertNotIn("U33333333", body)
+
+    async def test_filter_includes_recorded_cohorts_but_not_test_only_cohorts(self):
+        self._patch_sessions()
+        with get_connection() as connection:
+            connection.executemany(
+                """INSERT INTO retrospectives (user_id, session_name, slack_channel, slack_ts, good_points, improvements, learnings, action_item, is_test_submission) VALUES (?, ?, 'C22222222', '9.0', '', '', '', '', ?)""",
+                [('U55555555', '10기 1회차', 0), ('U44444444', '9기 테스트', 1)],
+            )
+        body = await (await self._get("/members?cohort=10기")).text()
+        self.assertIn('value="10기" selected', body)
+        self.assertIn("U55555555", body)
+        self.assertNotIn("U11111111", body)
+        self.assertNotIn('value="9기"', body)
+        self.assertLess(body.index('value="10기"'), body.index('value="6기"'))
 
     async def test_requires_session(self):
         response = await self.client.get("/members", allow_redirects=False)
