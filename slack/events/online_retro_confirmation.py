@@ -123,7 +123,7 @@ def _attendance_value(confirmation: dict) -> str:
 
 
 def buttons_open_at(starts_at: datetime.datetime) -> datetime.datetime:
-    """입장·출석 버튼이 열리는 시각. 팀 채널에 시작 N분 전 공지가 나갈 때와 같다."""
+    """입장 버튼이 열리는 시각. 팀 채널에 시작 N분 전 공지가 나갈 때와 같다."""
     return starts_at - datetime.timedelta(minutes=settings.ONLINE_RETRO_NOTIFY_MINUTES_BEFORE)
 
 
@@ -144,10 +144,10 @@ def build_confirmation_blocks(
     is_open = (now or tz_now()) >= opens_at
     prefix = "*[테스트]* 🧪\n\n" if confirmation["is_test"] else ""
     guide = (
-        "아래 버튼으로 출석 체크하고 Google Meet에 입장해 주세요."
+        "아래 버튼으로 입장하면 출석이 자동으로 기록돼요."
         if is_open
         else (
-            "`Google Meet 입장`과 `출석 체크` 버튼은 "
+            "`모임 입장` 버튼은 "
             f"시작 {settings.ONLINE_RETRO_NOTIFY_MINUTES_BEFORE}분 전인 "
             f"{opens_at:%H:%M}에 이 메시지에 열려요."
         )
@@ -178,14 +178,9 @@ def build_confirmation_blocks(
                     {
                         "type": "button",
                         "action_id": "open_online_retro_meeting",
-                        "text": {"type": "plain_text", "text": "Google Meet 입장"},
+                        "text": {"type": "plain_text", "text": "모임 입장"},
                         "style": "primary",
                         "url": confirmation["meet_url"],
-                    },
-                    {
-                        "type": "button",
-                        "action_id": "attend_online_retro_meeting",
-                        "text": {"type": "plain_text", "text": "출석 체크"},
                         "value": _attendance_value(confirmation),
                     },
                 ],

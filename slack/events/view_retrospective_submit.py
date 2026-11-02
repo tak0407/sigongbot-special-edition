@@ -258,12 +258,27 @@ async def handle_view_retrospective_submit(
 
         # 게시 성공을 기록한다. 이 단계가 실패해도 Slack에는 이미 게시됐으므로
         # 회고를 삭제하거나 다시 게시하지 않고 pending 상태로 남겨 둔다.
+        posted = False
         try:
             await mark_retrospective_posted(record["id"], response["ts"])
+            posted = True
         except Exception as error:
             logger.error(
                 f"게시 상태 기록 실패 - ID: {record['id']}, User: {user_id}, Error: {str(error)}"
             )
+
+        if posted:
+            # 진행 알림 실패 때문에 이미 게시한 회고를 제출 실패로 취급하지 않는다.
+            try:
+                from slack.events.online_retro_meeting import notify_submission_progress
+
+                await notify_submission_progress(
+                    client, session_name=session_name, team_channel=original_channel_id
+                )
+            except Exception:
+                logger.bind(alert=False).warning(
+                    "온라인 회고 작성 완료 안내를 보내지 못했습니다. 스케줄러에서 다시 확인합니다."
+                )
 
         # 방금 봇을 써 본 직후가 불편했던 점이 가장 생생할 때다. 공개 게시물이
         # 아니라 작성자에게만 보이는 안내로 제안 입구를 열어 준다.

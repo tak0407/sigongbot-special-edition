@@ -16,6 +16,7 @@ from slack.events.online_retro_meeting import (
     build_writing_blocks,
     handle_online_retro_attendance,
     handle_online_retro_photo_submit,
+    handle_open_online_retro_meeting,
     handle_open_online_retro_photo_upload,
     handle_start_online_retro_sharing,
     post_online_retro_announcement,
@@ -97,7 +98,7 @@ class OnlineRetroMeetingTest(unittest.IsolatedAsyncioTestCase):
             views_open=AsyncMock(),
         )
 
-    async def test_announcement_posts_once_and_contains_both_buttons(self):
+    async def test_announcement_posts_once_with_a_single_entry_button(self):
         await post_online_retro_announcement(self.client, meeting())
         await post_online_retro_announcement(self.client, meeting())
         self.client.chat_postMessage.assert_awaited_once()
@@ -106,8 +107,11 @@ class OnlineRetroMeetingTest(unittest.IsolatedAsyncioTestCase):
         actions = message["blocks"][1]["elements"]
         self.assertEqual(
             [action["action_id"] for action in actions],
-            ["attend_online_retro_meeting", "open_online_retro_meeting"],
+            ["open_online_retro_meeting"],
         )
+        self.assertEqual(json.loads(actions[0]["value"]), {
+            "session_name": "6기 1회차", "team_channel": "C11111111",
+        })
 
     async def test_attendance_keeps_first_click_only(self):
         body = {
@@ -127,8 +131,8 @@ class OnlineRetroMeetingTest(unittest.IsolatedAsyncioTestCase):
         }
         first_ack = AsyncMock()
         second_ack = AsyncMock()
-        await handle_online_retro_attendance(first_ack, body, self.client)
-        await handle_online_retro_attendance(second_ack, body, self.client)
+        await handle_open_online_retro_meeting(first_ack, body, self.client)
+        await handle_open_online_retro_meeting(second_ack, body, self.client)
 
         first_ack.assert_awaited_once()
         second_ack.assert_awaited_once()
@@ -144,10 +148,72 @@ class OnlineRetroMeetingTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("기록했어요", notices[0])
         self.assertIn("이미 기록", notices[1])
 
+    def entry_body(self, user_id="U11111111"):
+        return {
+            "actions": [{"value": json.dumps({
+                "session_name": meeting().session_name,
+                "team_channel": meeting().channel,
+            })}],
+            "user": {"id": user_id},
+            "channel": {"id": meeting().channel},
+        }
+
+    async def test_entry_before_opening_does_not_record_attendance(self):
+        with patch("slack.events.online_retro_meeting.tz_now", return_value=(
+            meeting().notify_at - datetime.timedelta(seconds=1)
+        )):
+            await handle_open_online_retro_meeting(AsyncMock(), self.entry_body(), self.client)
+        with get_connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM online_retro_attendance").fetchone()[0], 0)
+
+    async def test_attendance_keeps_the_entry_click_time(self):
+        clicked_at = meeting().starts_at - datetime.timedelta(seconds=1)
+        with patch("slack.events.online_retro_meeting.tz_now", return_value=clicked_at):
+            await handle_open_online_retro_meeting(AsyncMock(), self.entry_body(), self.client)
+        with get_connection() as connection:
+            saved = connection.execute("SELECT attended_at FROM online_retro_attendance").fetchone()[0]
+        self.assertEqual(datetime.datetime.fromisoformat(saved), clicked_at)
+
+    async def test_entry_for_a_different_team_does_not_record_attendance(self):
+        with patch.object(settings, "SUBMISSION_DESTINATIONS", {
+            "U11111111": "C11111111", "U22222222": "C22222222",
+        }):
+            await handle_open_online_retro_meeting(
+                AsyncMock(), self.entry_body("U22222222"), self.client
+            )
+        with get_connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM online_retro_attendance").fetchone()[0], 0)
+
+    async def test_previous_url_button_can_record_attendance_without_metadata(self):
+        body = self.entry_body()
+        body["actions"] = [{"action_id": "open_online_retro_meeting"}]
+        body["message"] = {"blocks": [{"type": "actions", "elements": [{
+            "action_id": "open_online_retro_meeting", "url": meeting().url,
+        }]}]}
+        await handle_open_online_retro_meeting(AsyncMock(), body, self.client)
+        with get_connection() as connection:
+            users = [row[0] for row in connection.execute("SELECT user_id FROM online_retro_attendance")]
+        self.assertEqual(users, ["U11111111"])
+
+    async def test_ambiguous_previous_url_button_does_not_guess_the_meeting(self):
+        other = OnlineRetroMeeting(
+            session_name="다른 회차", starts_at=meeting().starts_at,
+            notify_at=meeting().notify_at, channel=meeting().channel, url=meeting().url,
+        )
+        body = self.entry_body()
+        body["actions"] = [{"action_id": "open_online_retro_meeting", "url": meeting().url}]
+        with patch.object(settings, "ONLINE_RETRO_MEETINGS", [meeting(), other]):
+            await handle_open_online_retro_meeting(AsyncMock(), body, self.client)
+        with get_connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM online_retro_attendance").fetchone()[0], 0)
+
     def test_blocks_do_not_expose_url_in_message_text(self):
         blocks = build_online_retro_blocks(meeting())
         self.assertNotIn(meeting().url, blocks[0]["text"]["text"])
-        self.assertEqual(blocks[1]["elements"][1]["url"], meeting().url)
+        self.assertEqual(blocks[1]["elements"][0]["url"], meeting().url)
+        self.assertEqual(json.loads(build_writing_blocks(meeting())[1]["elements"][1]["value"]), {
+            "session_name": "6기 1회차", "team_channel": "C11111111",
+        })
 
     async def test_writing_and_time_up_phases_each_post_once(self):
         await post_writing_phase(self.client, meeting())
@@ -186,7 +252,7 @@ class OnlineRetroMeetingTest(unittest.IsolatedAsyncioTestCase):
         await handle_start_online_retro_sharing(AsyncMock(), action_body, self.client)
         self.client.chat_postMessage.assert_not_awaited()
         self.assertIn(
-            "출석 체크",
+            "모임 입장",
             self.client.chat_postEphemeral.await_args.kwargs["text"],
         )
 
