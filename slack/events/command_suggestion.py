@@ -6,9 +6,9 @@ from loguru import logger
 from slack_bolt.async_app import AsyncAck
 from slack_sdk.web.async_client import AsyncWebClient
 
-from config import settings
 from database.suggestions import create_suggestion
 from slack.ephemeral import post_ephemeral
+from slack.support_notifications import notify_support_recipients
 from slack.types import CommandBodyType, ViewBodyType, ViewType
 
 CATEGORIES = {
@@ -153,39 +153,30 @@ async def handle_view_suggestion_submit(
         return
 
     await ack()
-    admin_notified = True
-    try:
-        await client.chat_postMessage(
-            channel=settings.ADMIN_CHANNEL,
-            text=(
-                f"새 시공봇 개선 제안 #{suggestion['id']} · "
-                f"{CATEGORIES[category]} · 작성자 {user_id}"
-            ),
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": (
-                            f"*새 시공봇 개선 제안 #{suggestion['id']}*\n"
-                            f"분류: {CATEGORIES[category]} · 작성자: <@{user_id}> · "
-                            f"제출 채널: <#{submission_channel}>"
-                        ),
-                    },
+    admin_notified = await notify_support_recipients(
+        client,
+        text=(
+            f"새 시공봇 개선 제안 #{suggestion['id']} · "
+            f"{CATEGORIES[category]} · 작성자 {user_id}"
+        ),
+        blocks=[
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*새 시공봇 개선 제안 #{suggestion['id']}*\n"
+                        f"분류: {CATEGORIES[category]} · 작성자: <@{user_id}> · "
+                        f"제출 채널: <#{submission_channel}>"
+                    ),
                 },
-                {
-                    "type": "section",
-                    "text": {"type": "plain_text", "text": content},
-                },
-            ],
-        )
-    except Exception as error:
-        admin_notified = False
-        logger.bind(alert=False).warning(
-            "저장된 제안 관리자 알림 실패 - suggestion_id={}, error_type={}",
-            suggestion["id"],
-            type(error).__name__,
-        )
+            },
+            {
+                "type": "section",
+                "text": {"type": "plain_text", "text": content},
+            },
+        ],
+    )
 
     if admin_notified:
         message = f"제안 #{suggestion['id']}이 접수됐어요. 소중한 의견 감사합니다!"

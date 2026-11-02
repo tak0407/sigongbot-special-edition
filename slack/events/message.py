@@ -1,4 +1,5 @@
 from slack.types import MessageBodyType
+from slack.support_notifications import notify_support_recipients
 from config import settings
 
 from slack_bolt.async_app import AsyncAck, AsyncSay
@@ -17,15 +18,26 @@ async def handle_message(
     event = body["event"]
     thread_ts = event.get("thread_ts")
 
-    # 문의 채널에 메시지 남길 시 관리자 채널에 알림 유저 이름을 알림으로 준다.
+    # 문의 채널의 새 사용자 글만 지정된 수신자에게 개별 DM으로 알린다.
     if (
         event["channel"] == settings.SUPPORT_CHANNEL
         and event["type"] == "message"
         and not event.get("subtype")
+        and not event.get("bot_id")
         and not thread_ts
     ):
-        admin_mentions = " ".join(f"<@{admin_id}>" for admin_id in settings.ADMIN_IDS)
-        await client.chat_postMessage(
-            channel=settings.ADMIN_CHANNEL,
-            text=f"👋 <@{body['event']['user']}> 님이 <#{settings.SUPPORT_CHANNEL}> 에 문의를 남겼어요. 👀 {admin_mentions}",
+        text = f"👋 <@{event['user']}> 님이 <#{event['channel']}>에 문의를 남겼어요."
+        await notify_support_recipients(
+            client,
+            text=text,
+            blocks=[
+                {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "plain_text",
+                        "text": (event.get("text") or "첨부된 문의를 채널에서 확인해주세요.")[:3000],
+                    },
+                },
+            ],
         )

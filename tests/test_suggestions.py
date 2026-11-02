@@ -24,7 +24,25 @@ class SuggestionSlackTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.enterContext(patch.object(settings, "ADMIN_CHANNEL", "C99999999"))
+        self.enterContext(
+            patch.object(settings, "SUPPORT_NOTIFICATION_USER_IDS",
+                         ["U22222222", "U33333333"], create=True)
+        )
         initialize_database()
+
+    def client(self):
+        async def open_dm(*, users):
+            self.assertEqual(len(self.rows()), 1)
+            return {"ok": True, "channel": {"id": {
+                "U22222222": "D22222222",
+                "U33333333": "D33333333",
+            }[users]}}
+
+        return SimpleNamespace(
+            conversations_open=AsyncMock(side_effect=open_dm),
+            chat_postMessage=AsyncMock(),
+            chat_postEphemeral=AsyncMock(),
+        )
 
     def view(self) -> dict:
         view = suggestion_event.build_suggestion_view("C11111111")
@@ -78,10 +96,8 @@ class SuggestionSlackTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self.rows()), 1)
             return {"ts": "123.456"}
 
-        client = SimpleNamespace(
-            chat_postMessage=AsyncMock(side_effect=assert_saved_first),
-            chat_postEphemeral=AsyncMock(),
-        )
+        client = self.client()
+        client.chat_postMessage.side_effect = assert_saved_first
         ack = await self.submit(client)
         ack.assert_awaited_once_with()
         row = self.rows()[0]
@@ -89,13 +105,19 @@ class SuggestionSlackTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["user_id"], "U11111111")
         self.assertEqual(row["submission_channel"], "C11111111")
         self.assertEqual(row["status"], "pending")
-        client.chat_postMessage.assert_awaited_once()
+        messages = [call.kwargs for call in client.chat_postMessage.await_args_list]
+        self.assertEqual([message["channel"] for message in messages],
+                         ["D22222222", "D33333333"])
+        for message in messages:
+            self.assertIn("<@U11111111>", message["blocks"][0]["text"]["text"])
+            self.assertIn("<#C11111111>", message["blocks"][0]["text"]["text"])
+            self.assertEqual(message["blocks"][1]["text"], {
+                "type": "plain_text", "text": "제안 내용을 자세히 적었습니다."
+            })
         self.assertIn("접수됐어요", client.chat_postEphemeral.await_args.kwargs["text"])
 
     async def test_database_failure_does_not_notify_admin(self):
-        client = SimpleNamespace(
-            chat_postMessage=AsyncMock(), chat_postEphemeral=AsyncMock()
-        )
+        client = self.client()
         with patch.object(
             suggestion_event,
             "create_suggestion",
@@ -103,22 +125,51 @@ class SuggestionSlackTest(unittest.IsolatedAsyncioTestCase):
         ):
             ack = await self.submit(client)
         client.chat_postMessage.assert_not_awaited()
+        client.conversations_open.assert_not_awaited()
         client.chat_postEphemeral.assert_not_awaited()
         self.assertEqual(ack.await_args.kwargs["response_action"], "errors")
         self.assertIn("작성 내용은 유지", ack.await_args.kwargs["errors"]["content"])
         self.assertEqual(self.rows(), [])
 
     async def test_admin_notification_failure_preserves_saved_suggestion(self):
-        client = SimpleNamespace(
-            chat_postMessage=AsyncMock(side_effect=RuntimeError("slack down")),
-            chat_postEphemeral=AsyncMock(),
-        )
+        client = self.client()
+        client.chat_postMessage.side_effect = RuntimeError("slack down")
         ack = await self.submit(client)
         ack.assert_awaited_once_with()
         self.assertEqual(len(self.rows()), 1)
         notice = client.chat_postEphemeral.await_args.kwargs["text"]
         self.assertIn("안전하게 저장", notice)
         self.assertIn("관리자 알림", notice)
+
+    async def test_one_failed_dm_does_not_block_the_other_or_lose_the_suggestion(self):
+        client = self.client()
+        client.chat_postMessage.side_effect = [RuntimeError("slack down"), {"ok": True}]
+        ack = await self.submit(client)
+        ack.assert_awaited_once_with()
+        self.assertEqual(len(self.rows()), 1)
+        self.assertEqual(
+            [call.kwargs["channel"] for call in client.chat_postMessage.await_args_list],
+            ["D22222222", "D33333333"],
+        )
+        self.assertIn("안전하게 저장", client.chat_postEphemeral.await_args.kwargs["text"])
+
+    async def test_dm_notification_does_not_require_an_admin_channel(self):
+        client = self.client()
+        with patch.object(settings, "ADMIN_CHANNEL", ""):
+            await self.submit(client)
+        self.assertEqual(
+            [call.kwargs["channel"] for call in client.chat_postMessage.await_args_list],
+            ["D22222222", "D33333333"],
+        )
+        self.assertIn("접수됐어요", client.chat_postEphemeral.await_args.kwargs["text"])
+
+    async def test_empty_recipients_does_not_report_a_successful_notification(self):
+        client = self.client()
+        with patch.object(settings, "SUPPORT_NOTIFICATION_USER_IDS", []):
+            await self.submit(client)
+        self.assertEqual(len(self.rows()), 1)
+        client.chat_postMessage.assert_not_awaited()
+        self.assertIn("안전하게 저장", client.chat_postEphemeral.await_args.kwargs["text"])
 
 
 if __name__ == "__main__":
