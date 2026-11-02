@@ -356,6 +356,7 @@ async def notify_submission_progress(
 async def handle_online_retro_attendance(
     ack: AsyncAck, body: dict, client: AsyncWebClient
 ) -> None:
+    clicked_at = tz_now()
     await ack()
     metadata = json.loads(body["actions"][0]["value"])
     session_name = str(metadata.get("session_name") or "").strip()
@@ -363,11 +364,12 @@ async def handle_online_retro_attendance(
     meeting = await _meeting(session_name, team_channel) if session_name else None
     if meeting is None:
         raise ValueError("현재 설정된 온라인 회고 모임을 찾을 수 없어요.")
-    await _record_meeting_attendance(client, body, meeting)
+    await _record_meeting_attendance(client, body, meeting, clicked_at=clicked_at)
 
 
 async def _record_meeting_attendance(
-    client: AsyncWebClient, body: dict, meeting: OnlineRetroMeeting
+    client: AsyncWebClient, body: dict, meeting: OnlineRetroMeeting,
+    *, clicked_at: datetime.datetime,
 ) -> None:
     user_id = body["user"]["id"]
     # 확정 공지가 공지 채널에 모여 다른 팀 입장 버튼도 보인다. 팀 모임에는 그 팀원만
@@ -382,7 +384,7 @@ async def _record_meeting_attendance(
         )
         return
     # 새 확정 공지는 이때까지 버튼이 없지만, 예전 메시지에 남은 버튼도 같은 시각까지 막는다.
-    if tz_now() < meeting.notify_at:
+    if clicked_at < meeting.notify_at:
         opens_at = meeting.notify_at
         await post_ephemeral(
             client,
@@ -397,7 +399,8 @@ async def _record_meeting_attendance(
         return
     async with _phase_lock:
         created = await record_attendance(
-            session_name=meeting.session_name, team_channel=meeting.channel, user_id=user_id
+            session_name=meeting.session_name, team_channel=meeting.channel, user_id=user_id,
+            attended_at=clicked_at,
         )
     await post_ephemeral(
         client,
@@ -415,6 +418,7 @@ async def handle_open_online_retro_meeting(
     ack: AsyncAck, body: dict, client: AsyncWebClient
 ) -> None:
     """Meet URL 버튼 클릭을 출석으로 기록한다. 반복 입장은 최초 출석을 보존한다."""
+    clicked_at = tz_now()
     await ack()
     action = body["actions"][0]
     if action.get("value"):
@@ -440,7 +444,7 @@ async def handle_open_online_retro_meeting(
             text="모임 정보를 확인하지 못했어요. 최신 확정 공지의 모임 입장 버튼을 이용해 주세요.",
         )
         return
-    await _record_meeting_attendance(client, body, meeting)
+    await _record_meeting_attendance(client, body, meeting, clicked_at=clicked_at)
 
 
 async def _participant_action(
@@ -489,7 +493,9 @@ async def handle_start_online_retro_sharing(
             )
             return
         attendees = await list_attendees(meeting.session_name, meeting.channel)
-        submitted = await get_submitted_user_ids(meeting.session_name)
+        submitted = await get_submitted_user_ids(
+            meeting.session_name, include_test=False, posted_only=True
+        )
         if attendees:
             order = "\n".join(
                 f"{number}. <@{row['user_id']}> "

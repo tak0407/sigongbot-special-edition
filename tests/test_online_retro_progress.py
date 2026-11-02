@@ -168,6 +168,17 @@ class MeetingLeaderTest(ProgressTestCase):
 
 
 class WritingCompletionTest(ProgressTestCase):
+    async def test_sharing_order_does_not_mark_pending_or_test_submissions_complete(self):
+        await self.attend("U11111111")
+        await self.attend("U22222222")
+        await self.submit("U11111111", posted=False)
+        await self.submit("U22222222", is_test=True)
+        await handle_start_online_retro_sharing(AsyncMock(), self.action("U11111111"), self.client)
+        text = self.client.chat_postMessage.await_args.kwargs["blocks"][0]["text"]["text"]
+        self.assertIn("<@U11111111> ✍️ 작성 확인 필요", text)
+        self.assertIn("<@U22222222> ✍️ 작성 확인 필요", text)
+        self.assertNotIn("✅ 작성 완료", text)
+
     async def test_zero_attendees_never_means_everyone_finished(self):
         await self.submit("U11111111")
         self.assertFalse(await notify_all_writing_complete(self.client, self.meeting, now=START))

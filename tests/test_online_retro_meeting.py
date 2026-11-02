@@ -166,6 +166,14 @@ class OnlineRetroMeetingTest(unittest.IsolatedAsyncioTestCase):
         with get_connection() as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM online_retro_attendance").fetchone()[0], 0)
 
+    async def test_attendance_keeps_the_entry_click_time(self):
+        clicked_at = meeting().starts_at - datetime.timedelta(seconds=1)
+        with patch("slack.events.online_retro_meeting.tz_now", return_value=clicked_at):
+            await handle_open_online_retro_meeting(AsyncMock(), self.entry_body(), self.client)
+        with get_connection() as connection:
+            saved = connection.execute("SELECT attended_at FROM online_retro_attendance").fetchone()[0]
+        self.assertEqual(datetime.datetime.fromisoformat(saved), clicked_at)
+
     async def test_entry_for_a_different_team_does_not_record_attendance(self):
         with patch.object(settings, "SUBMISSION_DESTINATIONS", {
             "U11111111": "C11111111", "U22222222": "C22222222",
