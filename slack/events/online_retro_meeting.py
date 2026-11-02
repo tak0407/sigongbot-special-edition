@@ -94,7 +94,6 @@ def _action_value(meeting: OnlineRetroMeeting) -> str:
 
 def build_online_retro_blocks(meeting: OnlineRetroMeeting) -> list[dict]:
     starts_at = int(meeting.starts_at.timestamp())
-    attendance_value = _action_value(meeting)
     return [
         {
             "type": "section",
@@ -106,7 +105,7 @@ def build_online_retro_blocks(meeting: OnlineRetroMeeting) -> list[dict]:
                     f"모임은 <!date^{starts_at}^{{date_long_pretty}} {{time}}|"
                     f"{meeting.starts_at.isoformat()}>에 시작해요.\n"
                     f"모이면 {meeting.writing_minutes}분 동안 각자 주간 회고를 작성한 뒤 돌아가며 공유합니다.\n"
-                    "참여한다면 아래에서 출석을 남기고 모임에 입장해 주세요."
+                    "아래 버튼으로 입장하면 출석이 자동으로 기록돼요."
                 ),
             },
         },
@@ -115,16 +114,11 @@ def build_online_retro_blocks(meeting: OnlineRetroMeeting) -> list[dict]:
             "elements": [
                 {
                     "type": "button",
-                    "action_id": "attend_online_retro_meeting",
-                    "text": {"type": "plain_text", "text": "출석 체크"},
-                    "style": "primary",
-                    "value": attendance_value,
-                },
-                {
-                    "type": "button",
                     "action_id": "open_online_retro_meeting",
                     "text": {"type": "plain_text", "text": "모임 입장"},
+                    "style": "primary",
                     "url": meeting.url,
+                    "value": _action_value(meeting),
                 },
             ],
         },
@@ -148,7 +142,7 @@ async def post_online_retro_announcement(
 async def open_confirmation_buttons(
     client: AsyncWebClient, meeting: OnlineRetroMeeting
 ) -> None:
-    """시작 N분 전 팀 채널 공지와 함께, 미리 올라간 확정 공지에도 입장·출석 버튼을 단다.
+    """시작 N분 전 팀 채널 공지와 함께, 미리 올라간 확정 공지에도 입장 버튼을 단다.
 
     확정 공지를 못 고쳐도 팀 채널 공지에 같은 버튼이 있다. 실패가 매분 반복되며
     당일 진행을 막지 않도록 한 번만 시도한다.
@@ -170,7 +164,7 @@ async def open_confirmation_buttons(
         )
     except Exception:
         logger.exception(
-            "확정 공지에 입장·출석 버튼을 달지 못했습니다 - session={}",
+            "확정 공지에 입장 버튼을 달지 못했습니다 - session={}",
             meeting.session_name,
         )
     await mark_announcement_sent(key)
@@ -213,6 +207,7 @@ def build_writing_blocks(meeting: OnlineRetroMeeting) -> list[dict]:
                     "action_id": "open_online_retro_meeting",
                     "text": {"type": "plain_text", "text": "모임 입장"},
                     "url": meeting.url,
+                    "value": _action_value(meeting),
                 },
             ],
         },
@@ -282,16 +277,22 @@ async def handle_online_retro_attendance(
     meeting = await _meeting(session_name, team_channel) if session_name else None
     if meeting is None:
         raise ValueError("현재 설정된 온라인 회고 모임을 찾을 수 없어요.")
+    await _record_meeting_attendance(client, body, meeting)
+
+
+async def _record_meeting_attendance(
+    client: AsyncWebClient, body: dict, meeting: OnlineRetroMeeting
+) -> None:
     user_id = body["user"]["id"]
     # 확정 공지가 공지 채널에 모여 다른 팀 출석 버튼도 보인다. 팀 모임에는 그 팀원만
     # 출석한다. 테스트 채널처럼 팀 채널이 아닌 모임은 누구나 눌러 볼 수 있다.
     destinations = settings.SUBMISSION_DESTINATIONS
-    if team_channel in destinations.values() and destinations.get(user_id) != team_channel:
+    if meeting.channel in destinations.values() and destinations.get(user_id) != meeting.channel:
         await post_ephemeral(
             client,
             channel=body["channel"]["id"],
             user=user_id,
-            text="다른 팀 모임이에요. 자기 팀 확정 공지에서 출석 체크해 주세요.",
+            text="다른 팀 모임이에요. 자기 팀 확정 공지에서 모임에 입장해 주세요.",
         )
         return
     # 새 확정 공지는 이때까지 버튼이 없지만, 예전 메시지에 남은 버튼도 같은 시각까지 막는다.
@@ -302,30 +303,57 @@ async def handle_online_retro_attendance(
             channel=body["channel"]["id"],
             user=user_id,
             text=(
-                "출석 체크는 "
+                "입장에 따른 출석 기록은 "
                 f"<!date^{int(opens_at.timestamp())}^{{date_short_pretty}} {{time}}|"
                 f"{opens_at:%m/%d %H:%M}>부터 할 수 있어요."
             ),
         )
         return
     created = await record_attendance(
-        session_name=session_name, team_channel=team_channel, user_id=user_id
+        session_name=meeting.session_name, team_channel=meeting.channel, user_id=user_id
     )
     await post_ephemeral(
         client,
         channel=body["channel"]["id"],
         user=user_id,
         text=(
-            f"`{session_name}` 온라인 회고 모임 출석을 기록했어요."
+            f"`{meeting.session_name}` 온라인 회고 모임 출석을 기록했어요."
             if created
-            else f"`{session_name}` 온라인 회고 모임 출석은 이미 기록되어 있어요."
+            else f"`{meeting.session_name}` 온라인 회고 모임 출석은 이미 기록되어 있어요."
         ),
     )
 
 
-async def handle_open_online_retro_meeting(ack: AsyncAck) -> None:
-    """URL 버튼 상호작용을 즉시 확인한다."""
+async def handle_open_online_retro_meeting(
+    ack: AsyncAck, body: dict, client: AsyncWebClient
+) -> None:
+    """Meet URL 버튼 클릭을 출석으로 기록한다. 반복 입장은 최초 출석을 보존한다."""
     await ack()
+    action = body["actions"][0]
+    if action.get("value"):
+        metadata = json.loads(action["value"])
+        meeting = await _meeting(
+            str(metadata.get("session_name") or "").strip(),
+            str(metadata.get("team_channel") or "").strip(),
+        )
+    else:
+        # 이미 게시된 URL 버튼에는 value가 없다. 원래 메시지의 URL로 유일하게
+        # 식별할 수 있을 때만 기록하며 같은 URL을 쓰는 회차를 임의로 고르지 않는다.
+        url = action.get("url")
+        if not url:
+            for block in body.get("message", {}).get("blocks", []):
+                for element in block.get("elements", []):
+                    if element.get("action_id") == "open_online_retro_meeting":
+                        url = element.get("url")
+        matches = [item for item in await _scheduled_meetings() if url and item.url == url]
+        meeting = matches[0] if len(matches) == 1 else None
+    if meeting is None:
+        await post_ephemeral(
+            client, channel=body["channel"]["id"], user=body["user"]["id"],
+            text="모임 정보를 확인하지 못했어요. 최신 확정 공지의 모임 입장 버튼을 이용해 주세요.",
+        )
+        return
+    await _record_meeting_attendance(client, body, meeting)
 
 
 async def _participant_action(
@@ -348,7 +376,7 @@ async def _participant_action(
             client,
             channel=body["channel"]["id"],
             user=user_id,
-            text=f"먼저 출석 체크를 해야 {action_name}을 진행할 수 있어요.",
+            text=f"먼저 `모임 입장`을 눌러야 {action_name}을 진행할 수 있어요.",
         )
         return None
     return meeting

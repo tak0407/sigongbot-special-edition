@@ -381,10 +381,14 @@ class ConfirmMeetingTest(ConfirmationTestCase):
         actions = opened[1]["elements"]
         self.assertEqual(
             [action["action_id"] for action in actions],
-            ["open_online_retro_meeting", "attend_online_retro_meeting"],
+            ["open_online_retro_meeting"],
         )
         self.assertEqual(actions[0]["url"], confirmation["meet_url"])
-        self.assertIn("출석 체크하고 Google Meet에 입장", opened[0]["text"]["text"])
+        self.assertEqual(json.loads(actions[0]["value"]), {
+            "session_name": confirmation["session_name"],
+            "team_channel": confirmation["team_channel"],
+        })
+        self.assertIn("입장하면 출석이 자동으로 기록", opened[0]["text"]["text"])
 
     async def test_scheduler_adds_buttons_to_the_posted_confirmation_once(self):
         poll = await self.make_poll()
