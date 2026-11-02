@@ -15,6 +15,7 @@ from database.online_retro_attendance import (
     record_attendance,
 )
 from database.online_retro_confirmation import find_confirmation, list_confirmed
+from database.online_retro_leader import choose_meeting_leader
 from database.online_retro_poll import get_poll
 from database.retrospective import get_submitted_user_ids
 from database.scheduled_announcements import announcement_sent, mark_announcement_sent
@@ -215,27 +216,66 @@ def build_writing_blocks(meeting: OnlineRetroMeeting) -> list[dict]:
 
 
 async def post_writing_phase(client: AsyncWebClient, meeting: OnlineRetroMeeting) -> None:
-    key = _phase_key(meeting, "writing")
-    if await announcement_sent(key):
-        return
-    await client.chat_postMessage(
-        channel=meeting.channel,
-        text=f"{meeting.session_name} 회고 작성 시간입니다.",
-        blocks=build_writing_blocks(meeting),
+    async with _phase_lock:
+        key = _phase_key(meeting, "writing")
+        for phase in ("writing", "writing-complete", "sharing", "photo"):
+            if await announcement_sent(_phase_key(meeting, phase)):
+                return
+        await client.chat_postMessage(
+            channel=meeting.channel,
+            text=f"{meeting.session_name} 회고 작성 시간입니다.",
+            blocks=build_writing_blocks(meeting),
+        )
+        await mark_announcement_sent(key)
+
+
+async def post_meeting_leader(
+    client: AsyncWebClient, meeting: OnlineRetroMeeting,
+    *, now: datetime.datetime | None = None,
+) -> None:
+    """시작 시각 출석자 중 정한 이끌이를 다시 추첨하지 않고 한 번만 안내한다."""
+    async with _phase_lock:
+        key = _phase_key(meeting, "leader")
+        if await announcement_sent(key):
+            return
+        user_id = await choose_meeting_leader(
+            session_name=meeting.session_name, team_channel=meeting.channel,
+            starts_at=meeting.starts_at, now=now or tz_now(),
+        )
+        if user_id is None:
+            return
+        await client.chat_postMessage(
+            channel=meeting.channel,
+            text=f"오늘의 온라인 회고 모임 이끌이는 <@{user_id}>님이에요.",
+            blocks=[{
+                "type": "section", "text": {"type": "mrkdwn", "text": (
+                    f"*오늘의 모임 이끌이는 <@{user_id}>님이에요!* 🎲\n"
+                    "회고 작성과 공유 순서를 이끌어 주세요.\n"
+                    "진행 버튼은 출석한 누구나 사용할 수 있어요."
+                )},
+            }],
+        )
+        await mark_announcement_sent(key)
+
+
+def build_time_up_blocks(
+    meeting: OnlineRetroMeeting, *, completed_count: int | None = None
+) -> list[dict]:
+    text = (
+        f"*출석한 {completed_count}명 모두 회고 작성을 마쳤어요!* 🎉\n"
+        "준비되면 아래 버튼으로 회고 공유를 시작해 주세요."
+        if completed_count is not None
+        else (
+            f"*{meeting.writing_minutes}분 회고 작성 시간이 끝났어요* ⏰\n"
+            "작성 중인 내용을 마무리한 뒤, 모두 준비되면 참여자 한 명이 공유를 시작해 주세요."
+        )
     )
-    await mark_announcement_sent(key)
-
-
-def build_time_up_blocks(meeting: OnlineRetroMeeting) -> list[dict]:
     return [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": (
-                    f"*{meeting.writing_minutes}분 회고 작성 시간이 끝났어요* ⏰\n"
-                    "작성 중인 내용을 마무리한 뒤, 모두 준비되면 운영자가 공유를 시작해 주세요."
-                ),
+                "text": text,
             },
         },
         {
@@ -256,15 +296,61 @@ def build_time_up_blocks(meeting: OnlineRetroMeeting) -> list[dict]:
 async def post_writing_time_up(
     client: AsyncWebClient, meeting: OnlineRetroMeeting
 ) -> None:
-    key = _phase_key(meeting, "writing-time-up")
-    if await announcement_sent(key):
-        return
-    await client.chat_postMessage(
-        channel=meeting.channel,
-        text=f"{meeting.session_name} 회고 작성 시간이 끝났어요.",
-        blocks=build_time_up_blocks(meeting),
-    )
-    await mark_announcement_sent(key)
+    async with _phase_lock:
+        key = _phase_key(meeting, "writing-time-up")
+        for phase in ("writing-time-up", "writing-complete", "sharing", "photo"):
+            if await announcement_sent(_phase_key(meeting, phase)):
+                return
+        await client.chat_postMessage(
+            channel=meeting.channel,
+            text=f"{meeting.session_name} 회고 작성 시간이 끝났어요.",
+            blocks=build_time_up_blocks(meeting),
+        )
+        await mark_announcement_sent(key)
+
+
+async def notify_all_writing_complete(
+    client: AsyncWebClient, meeting: OnlineRetroMeeting,
+    *, now: datetime.datetime | None = None,
+) -> bool:
+    """실제 게시를 마친 출석자 전원의 완료를 알린다. 공유 시작은 참여자가 누른다."""
+    now = now or tz_now()
+    ends_at = meeting.starts_at + datetime.timedelta(minutes=meeting.writing_minutes)
+    if not meeting.starts_at <= now < ends_at + TIME_UP_GRACE:
+        return False
+    async with _phase_lock:
+        key = _phase_key(meeting, "writing-complete")
+        if await announcement_sent(key):
+            return True
+        for phase in ("sharing", "photo"):
+            if await announcement_sent(_phase_key(meeting, phase)):
+                return False
+        attendees = {
+            row["user_id"] for row in await list_attendees(meeting.session_name, meeting.channel)
+        }
+        if not attendees:
+            return False
+        submitted = await get_submitted_user_ids(
+            meeting.session_name, include_test=False, posted_only=True
+        )
+        if not attendees <= submitted:
+            return False
+        await client.chat_postMessage(
+            channel=meeting.channel,
+            text=f"{meeting.session_name} 출석자 모두 회고 작성을 마쳤어요.",
+            blocks=build_time_up_blocks(meeting, completed_count=len(attendees)),
+        )
+        await mark_announcement_sent(key)
+        return True
+
+
+async def notify_submission_progress(
+    client: AsyncWebClient, *, session_name: str, team_channel: str
+) -> None:
+    """제출 성공 직후 해당 팀의 작성 완료를 확인한다. 스케줄러도 재확인한다."""
+    meeting = await _meeting(session_name, team_channel)
+    if meeting is not None:
+        await notify_all_writing_complete(client, meeting)
 
 
 async def handle_online_retro_attendance(
@@ -284,7 +370,7 @@ async def _record_meeting_attendance(
     client: AsyncWebClient, body: dict, meeting: OnlineRetroMeeting
 ) -> None:
     user_id = body["user"]["id"]
-    # 확정 공지가 공지 채널에 모여 다른 팀 출석 버튼도 보인다. 팀 모임에는 그 팀원만
+    # 확정 공지가 공지 채널에 모여 다른 팀 입장 버튼도 보인다. 팀 모임에는 그 팀원만
     # 출석한다. 테스트 채널처럼 팀 채널이 아닌 모임은 누구나 눌러 볼 수 있다.
     destinations = settings.SUBMISSION_DESTINATIONS
     if meeting.channel in destinations.values() and destinations.get(user_id) != meeting.channel:
@@ -309,9 +395,10 @@ async def _record_meeting_attendance(
             ),
         )
         return
-    created = await record_attendance(
-        session_name=meeting.session_name, team_channel=meeting.channel, user_id=user_id
-    )
+    async with _phase_lock:
+        created = await record_attendance(
+            session_name=meeting.session_name, team_channel=meeting.channel, user_id=user_id
+        )
     await post_ephemeral(
         client,
         channel=body["channel"]["id"],
@@ -596,10 +683,13 @@ async def run_online_retro_meeting_scheduler(client: AsyncWebClient) -> None:
                     meeting.starts_at <= local_now
                     < meeting.starts_at + LATE_ANNOUNCEMENT_GRACE
                 ):
+                    await post_meeting_leader(client, meeting, now=local_now)
                     await post_writing_phase(client, meeting)
                 writing_ends_at = meeting.starts_at + datetime.timedelta(
                     minutes=meeting.writing_minutes
                 )
+                if meeting.starts_at <= local_now < writing_ends_at + TIME_UP_GRACE:
+                    await notify_all_writing_complete(client, meeting, now=local_now)
                 if writing_ends_at <= local_now < writing_ends_at + TIME_UP_GRACE:
                     await post_writing_time_up(client, meeting)
             except Exception:

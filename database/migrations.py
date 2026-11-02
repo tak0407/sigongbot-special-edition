@@ -535,6 +535,22 @@ def _online_retro_poll_message_channel(connection: sqlite3.Connection) -> None:
     connection.execute("ALTER TABLE online_retro_time_polls ADD COLUMN message_channel TEXT")
 
 
+def _online_retro_meeting_leaders(connection: sqlite3.Connection) -> None:
+    """모임 시작 시각별 이끌이를 보존해 재시작·공지 재시도 때 다시 추첨하지 않는다."""
+    connection.execute(
+        """
+        CREATE TABLE online_retro_meeting_leaders (
+            session_name TEXT NOT NULL,
+            team_channel TEXT NOT NULL,
+            starts_at TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            selected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (session_name, team_channel, starts_at)
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -554,6 +570,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (16, "session_passes_source", _session_passes_source),
     (17, "online_retro_poll_intro", _online_retro_poll_intro),
     (18, "online_retro_poll_message_channel", _online_retro_poll_message_channel),
+    (20, "online_retro_meeting_leaders", _online_retro_meeting_leaders),
 )
 
 
