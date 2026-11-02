@@ -152,6 +152,23 @@ async def get_vote(poll_id: int, user_id: str) -> list[str]:
     return await asyncio.to_thread(select)
 
 
+async def get_slot_voters(poll_id: int, slot: str) -> list[str]:
+    """해당 투표에서 지정한 시간에 참석 가능하다고 응답한 사용자만 돌려준다."""
+
+    def select() -> list[str]:
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT user_id, slots_json FROM online_retro_time_votes
+                 WHERE poll_id = ? ORDER BY user_id
+                """,
+                (poll_id,),
+            ).fetchall()
+        return [row["user_id"] for row in rows if slot in json.loads(row["slots_json"])]
+
+    return await asyncio.to_thread(select)
+
+
 async def list_polls() -> list[dict]:
     """관리자 화면용. 투표별 슬롯 집계, 참여 인원, 사람별 선택을 함께 돌려준다."""
 

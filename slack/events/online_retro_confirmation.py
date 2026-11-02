@@ -22,6 +22,7 @@ from database.online_retro_confirmation import (
     mark_failed,
     reserve_confirmation,
 )
+from database.online_retro_poll import get_slot_voters
 from google_workspace.calendar_meet import (
     GoogleApiError,
     apply_meet_access_type,
@@ -127,10 +128,14 @@ def buttons_open_at(starts_at: datetime.datetime) -> datetime.datetime:
 
 
 def build_confirmation_blocks(
-    confirmation: dict, *, now: datetime.datetime | None = None
+    confirmation: dict,
+    *,
+    attendee_ids: list[str] | None = None,
+    now: datetime.datetime | None = None,
 ) -> list[dict]:
     """확정 공지. 미리 출석하거나 빈 회의실에 들어가지 않도록 버튼은 시작 N분 전에 단다.
 
+    참석 예정 명단은 확정한 시간에 가능하다고 투표한 사람만 표시한다.
     Slack 버튼은 비활성으로 보여 줄 수 없어서, 그 전에는 버튼 없이 열리는 시각만 알린다.
     """
     starts_at = datetime.datetime.fromisoformat(confirmation["starts_at"])
@@ -147,6 +152,12 @@ def build_confirmation_blocks(
             f"{opens_at:%H:%M}에 이 메시지에 열려요."
         )
     )
+    attendee_ids = attendee_ids or []
+    attendee_names = " · ".join(f"<@{user_id}>" for user_id in attendee_ids)
+    attendance = (
+        f"*참석 예정 (투표 기준) · {len(attendee_ids)}명*\n"
+        + (attendee_names or "이 시간에 참석 가능하다고 투표한 사람이 없어요.")
+    )
     blocks = [
         {
             "type": "section",
@@ -154,7 +165,7 @@ def build_confirmation_blocks(
                 "type": "mrkdwn",
                 "text": (
                     f"{prefix}*{confirmation['team_name']} 온라인 회고 시간이 확정됐어요!* 🙌\n"
-                    f"{format_meeting_time(starts_at, ends_at)}\n{guide}"
+                    f"{format_meeting_time(starts_at, ends_at)}\n\n{attendance}\n\n{guide}"
                 ),
             },
         },
@@ -207,7 +218,8 @@ async def post_confirmation_announcement(
     진행은 `@here`가 팀에만 가도록 팀 채널에서 한다.
     """
     text = f"{confirmation['team_name']} 온라인 회고 시간이 확정됐어요."
-    blocks = build_confirmation_blocks(confirmation)
+    attendee_ids = await get_slot_voters(confirmation["poll_id"], confirmation["slot"])
+    blocks = build_confirmation_blocks(confirmation, attendee_ids=attendee_ids)
     if confirmation.get("announced_slack_ts"):
         await client.chat_update(
             channel=channel,
