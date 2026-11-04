@@ -6,15 +6,39 @@ from loguru import logger
 
 from exception import RetrospectiveAlreadySubmitted
 from database.sqlite import get_connection
+from retrospective_content import validate_essay
 
-SUBMISSION_CONTENT_FIELDS = (
+STRUCTURED_CONTENT_FIELDS = (
     "good_points",
     "improvements",
     "learnings",
     "action_item",
+)
+SUBMISSION_CONTENT_FIELDS = (
+    *STRUCTURED_CONTENT_FIELDS,
     "emotion_score",
     "emotion_reason",
+    "content_format",
+    "essay_title",
+    "essay_body",
 )
+
+
+def _normalize_content(data: dict[str, Any]) -> dict[str, Any]:
+    """한 형식의 본문만 저장하고 에세이 규칙을 모든 저장 경로에 적용한다."""
+    content = {field: data[field] for field in SUBMISSION_CONTENT_FIELDS}
+    if content["content_format"] not in ("structured", "essay"):
+        raise ValueError("지원하지 않는 회고 형식입니다.")
+    if content["content_format"] == "essay":
+        content["essay_title"], content["essay_body"] = validate_essay(
+            content["essay_title"], content["essay_body"]
+        )
+        for field in STRUCTURED_CONTENT_FIELDS:
+            content[field] = ""
+    else:
+        content["essay_title"] = None
+        content["essay_body"] = None
+    return content
 
 
 def _to_dict(row) -> dict[str, Any]:
@@ -32,7 +56,23 @@ async def create_retrospective(
     action_item: str,
     emotion_score: int | None = None,
     emotion_reason: str | None = None,
+    *,
+    content_format: str = "structured",
+    essay_title: str | None = None,
+    essay_body: str | None = None,
 ) -> dict[str, Any]:
+    content = _normalize_content({
+        "good_points": good_points,
+        "improvements": improvements,
+        "learnings": learnings,
+        "action_item": action_item,
+        "emotion_score": emotion_score,
+        "emotion_reason": emotion_reason,
+        "content_format": content_format,
+        "essay_title": essay_title,
+        "essay_body": essay_body,
+    })
+
     def insert() -> dict[str, Any]:
         with get_connection() as connection:
             cursor = connection.execute(
@@ -40,20 +80,16 @@ async def create_retrospective(
                 INSERT INTO retrospectives (
                     user_id, session_name, slack_channel, slack_ts,
                     good_points, improvements, learnings, action_item,
-                    emotion_score, emotion_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    emotion_score, emotion_reason,
+                    content_format, essay_title, essay_body
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
                     session_name,
                     slack_channel,
                     slack_ts,
-                    good_points,
-                    improvements,
-                    learnings,
-                    action_item,
-                    emotion_score,
-                    emotion_reason,
+                    *(content[field] for field in SUBMISSION_CONTENT_FIELDS),
                 ),
             )
             row = connection.execute(
@@ -77,6 +113,10 @@ async def start_retrospective_submission(
     emotion_score: int | None = None,
     emotion_reason: str | None = None,
     is_test: bool = False,
+    *,
+    content_format: str = "structured",
+    essay_title: str | None = None,
+    essay_body: str | None = None,
 ) -> dict[str, Any]:
     """Slack 게시 전에 회고를 `pending` 상태로 먼저 저장한다.
 
@@ -85,14 +125,18 @@ async def start_retrospective_submission(
     올리고, 게시되지 못한 `pending` 회고가 남아 있으면 그 행을 재사용한다.
     """
 
-    values = (
-        good_points,
-        improvements,
-        learnings,
-        action_item,
-        emotion_score,
-        emotion_reason,
-    )
+    content = _normalize_content({
+        "good_points": good_points,
+        "improvements": improvements,
+        "learnings": learnings,
+        "action_item": action_item,
+        "emotion_score": emotion_score,
+        "emotion_reason": emotion_reason,
+        "content_format": content_format,
+        "essay_title": essay_title,
+        "essay_body": essay_body,
+    })
+    values = tuple(content[field] for field in SUBMISSION_CONTENT_FIELDS)
 
     def insert() -> dict[str, Any]:
         with get_connection() as connection:
@@ -103,8 +147,9 @@ async def start_retrospective_submission(
                         user_id, session_name, slack_channel, slack_ts,
                         good_points, improvements, learnings, action_item,
                         emotion_score, emotion_reason,
+                        content_format, essay_title, essay_body,
                         slack_post_status, is_test_submission
-                    ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, 'pending', ?)
+                    ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
                     """,
                     (
                         user_id,
@@ -304,26 +349,33 @@ async def update_retrospective(
         "action_item",
         "emotion_score",
         "emotion_reason",
+        "essay_title",
+        "essay_body",
     }
     updates = {key: value for key, value in data.items() if key in allowed}
     if not updates:
         return await get_retrospective_by_id(retrospective_id)
 
     def update() -> dict[str, Any]:
-        assignments = ", ".join(f"{key} = ?" for key in updates)
         with get_connection() as connection:
-            cursor = connection.execute(
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT * FROM retrospectives WHERE id = ?", (retrospective_id,)
+            ).fetchone()
+            if existing is None:
+                raise ValueError(
+                    f"ID {retrospective_id}에 해당하는 회고를 찾을 수 없습니다."
+                )
+            content = _normalize_content({**dict(existing), **updates})
+            assignments = ", ".join(f"{field} = ?" for field in SUBMISSION_CONTENT_FIELDS)
+            connection.execute(
                 f"""
                 UPDATE retrospectives
                    SET {assignments}, updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
                 """,
-                [*updates.values(), retrospective_id],
+                [*(content[field] for field in SUBMISSION_CONTENT_FIELDS), retrospective_id],
             )
-            if cursor.rowcount == 0:
-                raise ValueError(
-                    f"ID {retrospective_id}에 해당하는 회고를 찾을 수 없습니다."
-                )
             row = connection.execute(
                 "SELECT * FROM retrospectives WHERE id = ?", (retrospective_id,)
             ).fetchone()

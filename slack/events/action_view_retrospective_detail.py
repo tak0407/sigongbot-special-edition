@@ -2,14 +2,11 @@ from slack.types import ViewBodyType
 from slack_bolt.async_app import AsyncAck
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.models.views import View
-from slack_sdk.models.blocks import (
-    SectionBlock,
-    DividerBlock,
-    ContextBlock,
-)
+from slack_sdk.models.blocks import SectionBlock
 from loguru import logger
 
 from database.retrospective import get_retrospective_by_id
+from slack.retrospective_blocks import build_retrospective_blocks
 
 
 async def handle_action_view_retrospective_detail(
@@ -50,42 +47,9 @@ async def handle_action_view_retrospective_detail(
         )
 
         # 회고 상세 모달 블록 생성
-        blocks = [
-            SectionBlock(text=f"*{session_name}* ({created_at})"),
-            DividerBlock(),
-            ContextBlock(
-                elements=[{"type": "mrkdwn", "text": "*잘했고 좋았던 점* 🌟"}]
-            ),
-            SectionBlock(text=retrospective["good_points"]),
-            DividerBlock(),
-            ContextBlock(
-                elements=[{"type": "mrkdwn", "text": "*아쉽고 개선하고 싶은 점* 🔧"}]
-            ),
-            SectionBlock(text=retrospective["improvements"]),
-            DividerBlock(),
-            ContextBlock(elements=[{"type": "mrkdwn", "text": "*새롭게 배운 점* 💡"}]),
-            SectionBlock(text=retrospective["learnings"]),
-            DividerBlock(),
-            ContextBlock(
-                elements=[{"type": "mrkdwn", "text": "*해볼만한 액션 아이템* 🚀"}]
-            ),
-            SectionBlock(text=retrospective["action_item"]),
-        ]
-
-        # 감정 점수가 있는 경우 추가
-        if retrospective.get("emotion_score"):
-            blocks.extend(
-                [
-                    DividerBlock(),
-                    SectionBlock(
-                        text=f"*오늘의 감정점수* :bar_chart: {retrospective['emotion_score']}/10"
-                    ),
-                ]
-            )
-
-            # 감정 이유가 있는 경우 추가
-            if retrospective.get("emotion_reason"):
-                blocks.append(SectionBlock(text=retrospective["emotion_reason"]))
+        blocks = build_retrospective_blocks(
+            retrospective, heading=f"*{session_name}* ({created_at})"
+        )
 
         # 상세 모달 표시 (views_push 사용)
         await client.views_push(

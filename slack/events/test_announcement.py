@@ -15,6 +15,7 @@ from database.guided_reflection import (
     save_guided_answer,
 )
 from reflection_questions import select_reflection_questions
+from retrospective_content import STRUCTURED_TEXT_MAX_LENGTH
 from utils import get_latest_temp_retrospective
 from slack.ephemeral import post_ephemeral
 from slack.events.command_retrospective import build_retrospective_view
@@ -32,6 +33,11 @@ RETROSPECTIVE_METHODS = [
         "value": "guided",
         "title": "💬 질문으로 회고 (베타)",
         "description": "4개 항목의 질문에 답하면 AI가 정리해요. 답변은 건너뛸 수 있어요.",
+    },
+    {
+        "value": "essay",
+        "title": "✍️ 자유 에세이",
+        "description": "경험과 생각을 자유로운 글로 나눕니다. 본문은 100~3,000자로 작성해요.",
     },
 ]
 
@@ -284,7 +290,7 @@ async def handle_method_select(
             if channel_id not in _team_channels():
                 raise ValueError("공유할 팀 채널을 다시 선택해 주세요.")
             metadata["channel_id"] = channel_id
-    if method not in {"direct", "guided"}:
+    if method not in {"direct", "guided", "essay"}:
         raise ValueError("회고 방식을 다시 선택해 주세요.")
     if method == "guided":
         flow = await create_guided_reflection(
@@ -300,6 +306,7 @@ async def handle_method_select(
             session_name=metadata["session_name"],
             test_mode=metadata.get("test_mode", True),
             initial_values=get_latest_temp_retrospective(body["user"]["id"]),
+            content_format="essay" if method == "essay" else "structured",
         )
     if legacy_action:
         await client.views_update(view_id=body["view"]["id"], view=next_view)
@@ -314,16 +321,16 @@ def _fallback_format(flow: dict) -> dict[str, str | bool]:
             **{
                 group["stage"]: "\n\n".join(
                     answer for answer in group_answers if answer
-                )[:500]
+                )[:STRUCTURED_TEXT_MAX_LENGTH]
                 for group, group_answers in zip(flow["questions"], answers)
             },
             "from_ai": False,
         }
     return {
-        "good_points": "\n\n".join(answers[:2])[:500],
-        "improvements": answers[2][:500],
-        "learnings": "\n\n".join(answers[3:5])[:500],
-        "action_item": answers[5][:500],
+        "good_points": "\n\n".join(answers[:2])[:STRUCTURED_TEXT_MAX_LENGTH],
+        "improvements": answers[2][:STRUCTURED_TEXT_MAX_LENGTH],
+        "learnings": "\n\n".join(answers[3:5])[:STRUCTURED_TEXT_MAX_LENGTH],
+        "action_item": answers[5][:STRUCTURED_TEXT_MAX_LENGTH],
         "from_ai": False,
     }
 
@@ -360,7 +367,7 @@ async def _finish_guided_formatting(*, client: AsyncWebClient, flow_id: str) -> 
     notice = (
         "AI가 질문형 회고를 정리했어요."
         if formatted["from_ai"]
-        else "AI 정리 없이 입력한 답변을 모았어요. 항목별 최대 500자까지 표시돼요."
+        else f"AI 정리 없이 입력한 답변을 모았어요. 항목별 최대 {STRUCTURED_TEXT_MAX_LENGTH:,}자까지 표시돼요."
     )
 
     try:

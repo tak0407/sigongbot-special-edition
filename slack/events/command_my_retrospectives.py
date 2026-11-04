@@ -39,11 +39,7 @@ async def handle_command_my_retrospectives(
             for retro in retrospectives:
                 retro_id = retro["id"]
                 session_name = retro["session_name"]
-                created_at = (
-                    retro["created_at"].split("T")[0]
-                    + " "
-                    + retro["created_at"].split("T")[1].split(".")[0]
-                )
+                created_at = retro["created_at"].replace("T", " ").split(".")[0]
 
                 # 회고 항목 블록
                 blocks.append(

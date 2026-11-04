@@ -551,6 +551,16 @@ def _online_retro_meeting_leaders(connection: sqlite3.Connection) -> None:
     )
 
 
+def _retrospective_essay_content(connection: sqlite3.Connection) -> None:
+    """기존 항목별 회고를 보존하면서 자유 에세이 원문을 따로 저장한다."""
+    connection.execute(
+        "ALTER TABLE retrospectives ADD COLUMN content_format TEXT NOT NULL"
+        " DEFAULT 'structured' CHECK (content_format IN ('structured', 'essay'))"
+    )
+    connection.execute("ALTER TABLE retrospectives ADD COLUMN essay_title TEXT")
+    connection.execute("ALTER TABLE retrospectives ADD COLUMN essay_body TEXT")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -570,6 +580,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (16, "session_passes_source", _session_passes_source),
     (17, "online_retro_poll_intro", _online_retro_poll_intro),
     (18, "online_retro_poll_message_channel", _online_retro_poll_message_channel),
+    (19, "retrospectives_essay_content", _retrospective_essay_content),
     (20, "online_retro_meeting_leaders", _online_retro_meeting_leaders),
 )
 

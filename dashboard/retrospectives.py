@@ -50,7 +50,8 @@ def _collect_list(session: str, page: int) -> dict:
         items = connection.execute(
             f"""
             SELECT id, user_id, session_name, slack_channel, slack_ts, created_at,
-                   emotion_score, good_points, improvements, learnings, action_item
+                   emotion_score, good_points, improvements, learnings, action_item,
+                   content_format, essay_title, essay_body
               FROM retrospectives
               {where}
              ORDER BY created_at DESC, id DESC
@@ -107,6 +108,11 @@ def _list_rows(data: dict, directory: dict) -> str:
     items = []
     for row in data["items"]:
         score = row["emotion_score"]
+        preview = row["good_points"]
+        if row.get("content_format", "structured") == "essay":
+            preview = " · ".join(
+                value for value in (row.get("essay_title"), row.get("essay_body")) if value
+            )
         items.append(
             "<tr>"
             f"<td>{slack_directory.message_cell(directory, row['slack_channel'], row['slack_ts'], to_kst(row['created_at']))}</td>"
@@ -114,7 +120,7 @@ def _list_rows(data: dict, directory: dict) -> str:
             f"<td>{escape(row['session_name'])}</td>"
             f"<td>{slack_directory.channel_cell(directory, row['slack_channel'])}</td>"
             f"<td>{score if score is not None else '-'}</td>"
-            f"<td>{escape(truncate(row['good_points'], PREVIEW_LENGTH))}</td>"
+            f"<td>{escape(truncate(preview, PREVIEW_LENGTH))}</td>"
             f'<td><a href="/retrospectives/{row["id"]}">열기</a></td>'
             "</tr>"
         )
@@ -136,7 +142,7 @@ async def handle_list(request: web.Request) -> web.Response:
     body = (
         f"{_filter_form(data)}"
         '<p class="table-hint">표를 좌우로 밀어 모든 항목을 확인하세요.</p><div class="table-scroll" role="region" aria-label="목록 표" tabindex="0"><table><thead><tr><th>제출 시각 (KST)</th><th>작성자</th><th>회차</th>'
-        "<th>채널</th><th>감정</th><th>잘했던 점</th><th></th></tr></thead>"
+        "<th>채널</th><th>감정</th><th>회고 미리보기</th><th></th></tr></thead>"
         f"<tbody>{_list_rows(data, directory)}</tbody></table></div>"
         f"{_pager(data)}"
     )
@@ -165,10 +171,15 @@ async def handle_detail(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(text=f"ID {retrospective_id} 회고를 찾을 수 없습니다.")
 
     directory = await slack_directory.get_directory(request, {row["slack_channel"]})
+    body_fields = FIELDS
+    if row.get("content_format", "structured") == "essay":
+        body_fields = [("essay_body", "자유 에세이")]
+        if row.get("essay_title"):
+            body_fields = [("essay_title", "제목"), *body_fields]
     fields = "".join(
         f'<div class="body-field"><div class="label">{escape(label)}</div>'
         f'<div class="text">{escape(row[key] or "-")}</div></div>'
-        for key, label in FIELDS
+        for key, label in body_fields
     )
     emotion = ""
     if row["emotion_score"] is not None:

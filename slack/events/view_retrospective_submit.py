@@ -4,7 +4,7 @@ from loguru import logger
 from slack.types import ViewBodyType, ViewType
 from slack_bolt.async_app import AsyncAck
 from slack_sdk.web.async_client import AsyncWebClient
-from slack_sdk.models.blocks import SectionBlock, DividerBlock, ContextBlock
+from slack_sdk.models.blocks import DividerBlock
 
 from config import settings
 from database.retrospective import (
@@ -14,7 +14,13 @@ from database.retrospective import (
 )
 from database.guided_reflection import delete_guided_reflection
 from exception import RetrospectiveAlreadySubmitted
+from retrospective_content import (
+    ESSAY_TITLE_MAX_LENGTH,
+    STRUCTURED_TEXT_MAX_LENGTH,
+    validate_essay,
+)
 from slack.ephemeral import post_ephemeral
+from slack.retrospective_blocks import build_retrospective_blocks
 from slack.events.command_suggestion import OPEN_SUGGESTION_ACTION_ID
 from utils import save_temp_retrospective, cleanup_temp_files
 
@@ -93,22 +99,55 @@ async def handle_view_retrospective_submit(
     """모달 제출 처리"""
     user_id = body["user"]["id"]
     acknowledged = False
+    error_field = "good_points"
+    draft = {}
 
     try:
         # 모달에서 입력된 값 추출
         values = view["state"]["values"]
 
-        # 각 필드의 입력값 추출
-        good_points = (
-            values["good_points"]["good_points_input"]["value"] or "작성되지 않음"
-        )
-        improvements = (
-            values["improvements"]["improvements_input"]["value"] or "작성되지 않음"
-        )
-        learnings = values["learnings"]["learnings_input"]["value"] or "작성되지 않음"
-        action_item = (
-            values["action_item"]["action_item_input"]["value"] or "작성되지 않음"
-        )
+        metadata_raw = view.get("private_metadata") or ""
+        try:
+            metadata = json.loads(metadata_raw)
+        except json.JSONDecodeError:
+            metadata = {"channel_id": metadata_raw, "session_name": "테스트 회차"}
+        content_format = metadata.get("content_format", "structured")
+        error_field = "essay_body" if content_format == "essay" or "essay_body" in values else "good_points"
+        fields = ("good_points", "improvements", "learnings", "action_item")
+        draft = {
+            field: values.get(field, {}).get(f"{field}_input", {}).get("value") or ""
+            for field in (*fields, "essay_title", "essay_body", "emotion_score", "emotion_reason")
+        }
+        draft["content_format"] = content_format
+        if content_format not in {"structured", "essay"}:
+            await ack(response_action="errors", errors={error_field: "회고 작성 방식을 다시 선택해주세요."})
+            return
+        if content_format == "essay":
+            if len(draft["essay_title"]) > ESSAY_TITLE_MAX_LENGTH:
+                await ack(response_action="errors", errors={"essay_title": f"제목은 {ESSAY_TITLE_MAX_LENGTH}자 이하로 작성해주세요."})
+                return
+            try:
+                essay_title, essay_body = validate_essay(draft["essay_title"], draft["essay_body"])
+            except ValueError as error:
+                await ack(response_action="errors", errors={"essay_body": str(error)})
+                return
+            content = {field: "" for field in fields}
+            content.update(content_format="essay", essay_title=essay_title, essay_body=essay_body)
+        else:
+            if any(field not in values for field in fields):
+                await ack(response_action="errors", errors={error_field: "회고 작성 방식과 입력창이 일치하지 않습니다. 작성창을 다시 열어주세요."})
+                return
+            errors = {
+                field: f"{STRUCTURED_TEXT_MAX_LENGTH:,}자 이하로 작성해주세요."
+                for field in fields if len(draft[field]) > STRUCTURED_TEXT_MAX_LENGTH
+            }
+            if errors:
+                await ack(response_action="errors", errors=errors)
+                return
+            content = {field: draft[field] or "작성되지 않음" for field in fields}
+        if len(draft["emotion_reason"]) > STRUCTURED_TEXT_MAX_LENGTH:
+            await ack(response_action="errors", errors={"emotion_reason": f"{STRUCTURED_TEXT_MAX_LENGTH:,}자 이하로 작성해주세요."})
+            return
 
         # 선택적 필드 처리
         emotion_score = (
@@ -133,11 +172,6 @@ async def handle_view_retrospective_submit(
                 first_file.get("id") if isinstance(first_file, dict) else first_file
             )
 
-        metadata_raw = body["view"].get("private_metadata") or ""
-        try:
-            metadata = json.loads(metadata_raw)
-        except json.JSONDecodeError:
-            metadata = {"channel_id": metadata_raw, "session_name": "테스트 회차"}
         session_name = metadata.get("session_name") or "테스트 회차"
         if metadata.get("guided_flow_id") and not any(
             (values[key][f"{key}_input"].get("value") or "").strip()
@@ -159,49 +193,15 @@ async def handle_view_retrospective_submit(
         if not original_channel_id:
             await ack(
                 response_action="errors",
-                errors={"good_points": "팀 배정이 등록되지 않았어요. 관리자에게 문의해주세요. 작성 내용은 이 창에 유지됩니다."},
+                errors={error_field: "팀 배정이 등록되지 않았어요. 관리자에게 문의해주세요. 작성 내용은 이 창에 유지됩니다."},
             )
             return
 
         # 메시지 블록 생성
-        blocks = [
-            SectionBlock(
-                text=f"*<@{user_id}>님이 `{session_name}` 회고를 공유했어요! 🤗*"
-            ),
-            DividerBlock(),
-            ContextBlock(
-                elements=[{"type": "mrkdwn", "text": "*잘했고 좋았던 점* 🌟"}]
-            ),
-            SectionBlock(text=good_points),
-            DividerBlock(),
-            ContextBlock(
-                elements=[{"type": "mrkdwn", "text": "*아쉽고 개선하고 싶은 점* 🔧"}]
-            ),
-            SectionBlock(text=improvements),
-            DividerBlock(),
-            ContextBlock(elements=[{"type": "mrkdwn", "text": "*새롭게 배운 점* 💡"}]),
-            SectionBlock(text=learnings),
-            DividerBlock(),
-            ContextBlock(
-                elements=[{"type": "mrkdwn", "text": "*해볼만한 액션 아이템* 🚀"}]
-            ),
-            SectionBlock(text=action_item),
-        ]
-
-        # 감정 점수가 입력되었다면 추가
-        if emotion_score:
-            blocks.extend(
-                [
-                    DividerBlock(),
-                    SectionBlock(
-                        text=f"*오늘의 감정점수* :bar_chart: {emotion_score}/10"
-                    ),
-                ]
-            )
-
-            # 감정 이유가 입력되었다면 추가
-            if emotion_reason:
-                blocks.append(SectionBlock(text=emotion_reason))
+        blocks = build_retrospective_blocks(
+            {**content, "emotion_score": emotion_score, "emotion_reason": emotion_reason},
+            heading=f"*<@{user_id}>님이 `{session_name}` 회고를 공유했어요! 🤗*",
+        )
 
         if calendar_file_id:
             blocks.extend(
@@ -223,10 +223,7 @@ async def handle_view_retrospective_submit(
                 user_id=user_id,
                 session_name=session_name,
                 slack_channel=original_channel_id,
-                good_points=good_points,
-                improvements=improvements,
-                learnings=learnings,
-                action_item=action_item,
+                **content,
                 emotion_score=int(emotion_score) if emotion_score else None,
                 emotion_reason=emotion_reason if emotion_reason else None,
                 is_test=_is_test_session(session_name),
@@ -236,7 +233,7 @@ async def handle_view_retrospective_submit(
             await ack(
                 response_action="errors",
                 errors={
-                    "good_points": "이번 회차 회고는 이미 제출됐어요. 수정이 필요하면 관리자에게 문의해주세요."
+                    error_field: "이번 회차 회고는 이미 제출됐어요. 수정이 필요하면 관리자에게 문의해주세요."
                 },
             )
             return
@@ -301,14 +298,7 @@ async def handle_view_retrospective_submit(
         try:
             save_temp_retrospective(
                 user_id,
-                {
-                    "good_points": locals().get("good_points", ""),
-                    "improvements": locals().get("improvements", ""),
-                    "learnings": locals().get("learnings", ""),
-                    "action_item": locals().get("action_item", ""),
-                    "emotion_score": locals().get("emotion_score", ""),
-                    "emotion_reason": locals().get("emotion_reason", ""),
-                },
+                draft,
             )
         except Exception as save_error:
             logger.error(f"임시 저장 실패 - User: {user_id}, Error: {str(save_error)}")
@@ -317,7 +307,7 @@ async def handle_view_retrospective_submit(
             await ack(
                 response_action="errors",
                 errors={
-                    "good_points": "데이터 저장 중 오류가 발생했습니다. 다시 시도해주세요. (작성한 내용은 임시 저장되었습니다)"
+                    error_field: "데이터 저장 중 오류가 발생했습니다. 다시 시도해주세요. (작성한 내용은 임시 저장되었습니다)"
                 },
             )
         else:

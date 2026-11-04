@@ -20,6 +20,8 @@ WORD_FIELDS = (
     "learnings",
     "action_item",
     "emotion_reason",
+    "essay_title",
+    "essay_body",
 )
 
 MAX_WORDS = 30

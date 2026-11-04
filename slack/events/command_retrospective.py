@@ -1,5 +1,11 @@
 import json
 
+from retrospective_content import (
+    ESSAY_MAX_LENGTH,
+    ESSAY_MIN_LENGTH,
+    ESSAY_TITLE_MAX_LENGTH,
+    STRUCTURED_TEXT_MAX_LENGTH,
+)
 from slack.types import CommandBodyType
 from slack_bolt.async_app import AsyncAck
 from slack_sdk.web.async_client import AsyncWebClient
@@ -17,13 +23,16 @@ def _text_input(
     label: str,
     initial_value: str = "",
     optional: bool = False,
+    min_length: int = 1,
+    max_length: int = STRUCTURED_TEXT_MAX_LENGTH,
+    multiline: bool = True,
 ) -> dict:
     element = {
         "type": "plain_text_input",
         "action_id": action_id,
-        "multiline": True,
-        "min_length": 1,
-        "max_length": 500,
+        "multiline": multiline,
+        "min_length": min_length,
+        "max_length": max_length,
     }
     if initial_value:
         element["initial_value"] = initial_value
@@ -43,7 +52,10 @@ def build_retrospective_view(
     initial_values: dict | None = None,
     test_mode: bool = False,
     guided_flow_id: str | None = None,
+    content_format: str = "structured",
 ) -> dict:
+    if content_format not in {"structured", "essay"}:
+        raise ValueError("회고 작성 방식을 다시 선택해 주세요.")
     initial_values = initial_values or {}
     if test_mode:
         notice = f"현재 `{session_name}`로 테스트 중입니다. 반복해서 제출할 수 있어요."
@@ -126,7 +138,35 @@ def build_retrospective_view(
         },
     ]
 
-    if initial_values.get("from_ai"):
+    if content_format == "essay":
+        blocks[1:5] = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "plain_text",
+                    "text": (
+                        "이번 회고 기간에 겪은 일과, 그 경험을 통해 떠올린 생각이나 "
+                        "느낀 점을 자유롭게 적어주세요. 주제와 구성은 자유입니다.\n"
+                        f"본문은 앞뒤 공백을 제외하고 {ESSAY_MIN_LENGTH}자 이상, "
+                        f"전체 {ESSAY_MAX_LENGTH:,}자 이하로 작성해주세요."
+                    ),
+                },
+            },
+            _text_input(
+                block_id="essay_title", action_id="essay_title_input",
+                label="제목 (선택)", optional=True, multiline=False,
+                max_length=ESSAY_TITLE_MAX_LENGTH,
+                initial_value=initial_values.get("essay_title", ""),
+            ),
+            _text_input(
+                block_id="essay_body", action_id="essay_body_input",
+                label="자유 에세이", min_length=ESSAY_MIN_LENGTH,
+                max_length=ESSAY_MAX_LENGTH,
+                initial_value=initial_values.get("essay_body", ""),
+            ),
+        ]
+
+    if initial_values.get("from_ai") and content_format == "structured":
         blocks.insert(
             1,
             {
@@ -151,6 +191,7 @@ def build_retrospective_view(
                 "channel_id": channel_id,
                 "session_name": session_name,
                 "guided_flow_id": guided_flow_id,
+                "content_format": content_format,
             },
             ensure_ascii=False,
         ),
