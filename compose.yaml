@@ -1,4 +1,22 @@
 services:
+  website:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    volumes:
+      - ./site/public:/usr/share/nginx/html:ro
+      - ./site/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   sigongbot:
     build: .
     container_name: sigongbot-special-edition

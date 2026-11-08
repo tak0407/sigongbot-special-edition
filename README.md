@@ -54,6 +54,12 @@ Slack 이미지 첨부에는 `files:read` 권한이 필요합니다. 매니페�
 
 > 질문형 회고 정리는 Docker 이미지에 설치된 Antigravity CLI(`agy`)와 Google 계정 로그인을 사용합니다. 별도 Gemini API 키는 필요하지 않습니다. AI 호출이 실패해도 일반 회고 작성과 조회는 동작하며, 질문형 회고는 기본 매핑으로 처리됩니다.
 
+## 공개 사이트
+
+`sigonglife.link`의 랜딩페이지·개인정보처리방침·이용약관은 `site/public/`에 있습니다.
+미니 PC에서 `website` 서비스만 시작하고 기존 Cloudflare Tunnel에 연결합니다.
+`admin.sigonglife.link`는 그대로 유지합니다. [사이트 배포 절차](docs/website-deployment.md)를 따르세요.
+
 ## Ubuntu 배포
 
 ### 1. Docker 설치

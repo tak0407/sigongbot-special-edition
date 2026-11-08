@@ -182,8 +182,8 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation
-/site
+# Local Site hosting metadata (mini PC deployment uses site/public)
+/site/.openai/
 
 # mypy
 .mypy_cache/

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://sigonglife.link/sitemap.xml
