@@ -74,6 +74,7 @@ async def mark_confirmed(
     calendar_event_id: str,
     meet_url: str,
     meet_access_type: str | None,
+    warning_text: str | None = None,
 ) -> dict:
     def update() -> dict:
         with get_connection() as connection:
@@ -83,12 +84,18 @@ async def mark_confirmed(
                    SET calendar_event_id = ?,
                        meet_url = ?,
                        meet_access_type = ?,
+                       warning_text = ?,
                        status = 'confirmed',
                        last_error = NULL,
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
                 """,
-                (calendar_event_id, meet_url, meet_access_type, confirmation_id),
+                (calendar_event_id, meet_url, meet_access_type, warning_text, confirmation_id),
+            )
+            connection.execute(
+                """UPDATE online_retro_time_polls SET message_dirty = message_dirty + 1
+                    WHERE id = (SELECT poll_id FROM online_retro_confirmed_meetings WHERE id = ?)""",
+                (confirmation_id,),
             )
             row = connection.execute(
                 "SELECT * FROM online_retro_confirmed_meetings WHERE id = ?",
@@ -129,6 +136,11 @@ async def mark_cancelled(confirmation_id: int) -> None:
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
                 """,
+                (confirmation_id,),
+            )
+            connection.execute(
+                """UPDATE online_retro_time_polls SET message_dirty = message_dirty + 1
+                    WHERE id = (SELECT poll_id FROM online_retro_confirmed_meetings WHERE id = ?)""",
                 (confirmation_id,),
             )
 

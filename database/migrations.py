@@ -561,6 +561,18 @@ def _retrospective_essay_content(connection: sqlite3.Connection) -> None:
     connection.execute("ALTER TABLE retrospectives ADD COLUMN essay_body TEXT")
 
 
+def _online_retro_auto_confirmation(connection: sqlite3.Connection) -> None:
+    connection.execute("ALTER TABLE online_retro_time_polls ADD COLUMN all_voted_at TEXT")
+    connection.execute("ALTER TABLE online_retro_time_polls ADD COLUMN auto_confirm_attempted_at TEXT")
+    connection.execute("ALTER TABLE online_retro_time_polls ADD COLUMN auto_confirm_error TEXT")
+    connection.execute(
+        "ALTER TABLE online_retro_time_polls ADD COLUMN message_dirty INTEGER NOT NULL DEFAULT 0"
+    )
+    connection.execute(
+        "ALTER TABLE online_retro_confirmed_meetings ADD COLUMN warning_text TEXT"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "baseline_schema", _baseline),
     (2, "guided_reflections_formatted_json", _guided_formatted_json),
@@ -582,6 +594,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (18, "online_retro_poll_message_channel", _online_retro_poll_message_channel),
     (19, "retrospectives_essay_content", _retrospective_essay_content),
     (20, "online_retro_meeting_leaders", _online_retro_meeting_leaders),
+    (21, "online_retro_auto_confirmation", _online_retro_auto_confirmation),
 )
 
 

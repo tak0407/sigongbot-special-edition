@@ -31,6 +31,7 @@ try:
     from slack.events.online_retro_poll_reminder import (
         run_online_retro_poll_reminder_scheduler,
     )
+    from slack.events.online_retro_auto_confirm import run_online_retro_auto_confirm_scheduler
     from slack.events.unsubmitted_reminder import (
         run_unsubmitted_reminder_scheduler,
     )
@@ -118,6 +119,12 @@ async def main():
             lambda: run_online_retro_poll_reminder_scheduler(slack_app.client),
         )
     ) if settings.ENV == "prod" and settings.SUBMISSION_DESTINATIONS else None
+    auto_confirm_task = asyncio.create_task(
+        supervise(
+            "온라인 회고 시간 자동 확정 스케줄러",
+            lambda: run_online_retro_auto_confirm_scheduler(slack_app.client),
+        )
+    ) if settings.ENV == "prod" else None
 
     try:
         # HTTP 서버 시작
@@ -147,6 +154,9 @@ async def main():
         if poll_reminder_task:
             poll_reminder_task.cancel()
             tasks.append(poll_reminder_task)
+        if auto_confirm_task:
+            auto_confirm_task.cancel()
+            tasks.append(auto_confirm_task)
         await asyncio.gather(*tasks, return_exceptions=True)
         await handler.close_async()
         await runner.cleanup()

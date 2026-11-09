@@ -1,8 +1,10 @@
 """팀별 온라인 회고 시간 투표 저장소."""
 
 import asyncio
+import datetime
 import json
 
+from config import settings
 from database.sqlite import get_connection
 
 
@@ -101,7 +103,25 @@ async def message_polls(*, meeting_date: str, is_test: bool) -> list[dict]:
                 """,
                 (meeting_date, int(is_test)),
             ).fetchall()
-        return [dict(row) for row in rows]
+            result = []
+            for row in rows:
+                poll = dict(row)
+                confirmation = connection.execute(
+                    "SELECT * FROM online_retro_confirmed_meetings WHERE poll_id = ?",
+                    (poll["id"],),
+                ).fetchone()
+                poll["confirmation"] = dict(confirmation) if confirmation else None
+                poll["attendee_ids"] = []
+                if confirmation and confirmation["status"] == "confirmed":
+                    poll["attendee_ids"] = [
+                        vote["user_id"] for vote in connection.execute(
+                            "SELECT user_id, slots_json FROM online_retro_time_votes WHERE poll_id = ? ORDER BY user_id",
+                            (poll["id"],),
+                        )
+                        if confirmation["slot"] in json.loads(vote["slots_json"])
+                    ]
+                result.append(poll)
+        return result
 
     return await asyncio.to_thread(select)
 
@@ -121,9 +141,66 @@ async def get_poll(poll_id: int) -> dict | None:
     return await asyncio.to_thread(select)
 
 
-async def save_vote(*, poll_id: int, user_id: str, slots: list[str]) -> None:
-    def upsert() -> None:
+def _sync_completion(connection, poll: dict, now: datetime.datetime) -> None:
+    members = {
+        user for user, channel in settings.SUBMISSION_DESTINATIONS.items()
+        if channel == poll["team_channel"]
+    }
+    voters = {
+        row["user_id"] for row in connection.execute(
+            "SELECT user_id FROM online_retro_time_votes WHERE poll_id = ?", (poll["id"],)
+        )
+    }
+    complete = not poll["is_test"] and bool(members) and members <= voters
+    if complete and not poll["all_voted_at"]:
+        connection.execute(
+            "UPDATE online_retro_time_polls SET all_voted_at = ?, message_dirty = message_dirty + 1 WHERE id = ?",
+            (now.isoformat(), poll["id"]),
+        )
+    elif not complete and poll["all_voted_at"]:
+        connection.execute(
+            """UPDATE online_retro_time_polls
+                  SET all_voted_at = NULL, auto_confirm_attempted_at = NULL,
+                      auto_confirm_error = NULL, message_dirty = message_dirty + 1
+                WHERE id = ?""",
+            (poll["id"],),
+        )
+
+
+async def sync_poll_completion(
+    poll_id: int, *, now: datetime.datetime
+) -> dict:
+    """기존 투표와 팀 구성 변경도 확인한다. 최초 전원 응답 시각은 유지한다."""
+    def update() -> dict:
         with get_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            poll = dict(connection.execute(
+                "SELECT * FROM online_retro_time_polls WHERE id = ?", (poll_id,)
+            ).fetchone())
+            _sync_completion(connection, poll, now)
+            return dict(connection.execute(
+                "SELECT * FROM online_retro_time_polls WHERE id = ?", (poll_id,)
+            ).fetchone())
+
+    return await asyncio.to_thread(update)
+
+
+async def save_vote(
+    *, poll_id: int, user_id: str, slots: list[str],
+    now: datetime.datetime | None = None,
+) -> bool:
+    """응답과 전원 완료 시각을 같은 트랜잭션에 저장한다. 마감된 투표는 바꾸지 않는다."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+
+    def upsert() -> bool:
+        with get_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            confirmation = connection.execute(
+                "SELECT status FROM online_retro_confirmed_meetings WHERE poll_id = ?",
+                (poll_id,),
+            ).fetchone()
+            if confirmation and confirmation["status"] in {"pending", "confirmed"}:
+                return False
             connection.execute(
                 """
                 INSERT INTO online_retro_time_votes (poll_id, user_id, slots_json)
@@ -134,8 +211,78 @@ async def save_vote(*, poll_id: int, user_id: str, slots: list[str]) -> None:
                 """,
                 (poll_id, user_id, json.dumps(slots, ensure_ascii=False)),
             )
+            poll = dict(connection.execute(
+                "SELECT * FROM online_retro_time_polls WHERE id = ?", (poll_id,)
+            ).fetchone())
+            _sync_completion(connection, poll, now)
+            connection.execute(
+                "UPDATE online_retro_time_polls SET message_dirty = message_dirty + 1 WHERE id = ?",
+                (poll_id,),
+            )
+            return True
 
-    await asyncio.to_thread(upsert)
+    return await asyncio.to_thread(upsert)
+
+
+async def poll_is_closed(poll_id: int) -> bool:
+    def select() -> bool:
+        with get_connection() as connection:
+            row = connection.execute(
+                "SELECT status FROM online_retro_confirmed_meetings WHERE poll_id = ?",
+                (poll_id,),
+            ).fetchone()
+            return bool(row and row["status"] in {"pending", "confirmed"})
+    return await asyncio.to_thread(select)
+
+
+async def mark_auto_confirm_attempt(poll_id: int, *, now: datetime.datetime) -> None:
+    def update() -> None:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE online_retro_time_polls SET auto_confirm_attempted_at = ? WHERE id = ?",
+                (now.isoformat(), poll_id),
+            )
+    await asyncio.to_thread(update)
+
+
+async def set_auto_confirm_error(poll_id: int, error: str | None) -> None:
+    def update() -> None:
+        with get_connection() as connection:
+            connection.execute(
+                """UPDATE online_retro_time_polls
+                      SET auto_confirm_error = ?, message_dirty = message_dirty + 1
+                    WHERE id = ? AND auto_confirm_error IS NOT ?""",
+                (error[:500] if error else None, poll_id, error[:500] if error else None),
+            )
+    await asyncio.to_thread(update)
+
+
+async def mark_poll_message_dirty(poll_id: int) -> None:
+    def update() -> None:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE online_retro_time_polls SET message_dirty = message_dirty + 1 WHERE id = ?",
+                (poll_id,),
+            )
+    await asyncio.to_thread(update)
+
+
+async def mark_poll_message_clean(shown: list[dict]) -> None:
+    """그린 버전만 완료 처리한다. Slack 요청 도중 새 응답이 저장되면 대기를 유지한다."""
+    def update() -> None:
+        with get_connection() as connection:
+            for poll in shown:
+                connection.execute(
+                    "UPDATE online_retro_time_polls SET message_dirty = 0 WHERE id = ? AND message_dirty = ?",
+                    (poll["id"], poll["message_dirty"]),
+                )
+                confirmation = poll.get("confirmation")
+                if confirmation and confirmation["status"] == "confirmed":
+                    connection.execute(
+                        "UPDATE online_retro_confirmed_meetings SET announced_slack_ts = ? WHERE id = ?",
+                        (poll["slack_ts"], confirmation["id"]),
+                    )
+    await asyncio.to_thread(update)
 
 
 async def get_vote(poll_id: int, user_id: str) -> list[str]:

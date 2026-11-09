@@ -349,10 +349,15 @@ def _confirmation_detail(confirmation: dict | None) -> str:
         if confirmation["last_error"]
         else ""
     )
+    warning = (
+        f'<div class="meta"><b>입장 설정 확인 필요</b><br>{escape(confirmation["warning_text"])}</div>'
+        if confirmation.get("warning_text")
+        else ""
+    )
     return (
         f'<div class="meta"><b>{escape(format_meeting_time(starts_at, ends_at))}</b>{link}<br>'
         f"입장 정책 {escape(str(access))} · 갱신 {escape(to_kst(confirmation['updated_at']))} KST<br>"
-        f"이벤트 <code>{escape(confirmation['calendar_event_id'])}</code></div>{error}"
+        f"이벤트 <code>{escape(confirmation['calendar_event_id'])}</code></div>{warning}{error}"
     )
 
 
