@@ -22,7 +22,7 @@ from database.online_retro_confirmation import (
     mark_failed,
     reserve_confirmation,
 )
-from database.online_retro_poll import get_slot_voters
+from database.online_retro_poll import get_poll, get_slot_voters, mark_poll_message_dirty
 from google_workspace.calendar_meet import (
     GoogleApiError,
     apply_meet_access_type,
@@ -33,6 +33,7 @@ from google_workspace.calendar_meet import (
 )
 from google_workspace.oauth import GoogleAuthError
 from slack.events.online_retro_poll import TIME_SLOTS, WEEKDAYS
+from slack.events.online_retro_lock import poll_lock
 from utils import tz_now
 
 # 이 주소들만 Google 계정이 확실하다. 다른 도메인은 Google 계정인지 알 수 없어
@@ -207,11 +208,17 @@ def build_confirmation_blocks(
 async def post_confirmation_announcement(
     client: AsyncWebClient, confirmation: dict, *, channel: str
 ) -> None:
-    """확정 공지를 투표가 올라간 채널에 올린다. 시간이 바뀌면 기존 공지를 갱신한다.
+    """원본 투표 공지에 조별 확정 안내를 합친다. 공유 공지가 없는 과거 투표는 별도로 알린다.
 
     투표를 공지 채널에 모으므로 결과도 같은 곳에서 본다. 시작 직전 공지와 당일
     진행은 `@here`가 팀에만 가도록 팀 채널에서 한다.
     """
+    poll = await get_poll(confirmation["poll_id"])
+    if poll and poll.get("message_channel") and poll.get("slack_ts"):
+        from slack.events.online_retro_poll import _update_poll_message
+        await mark_poll_message_dirty(poll["id"])
+        await _update_poll_message(client, poll)
+        return
     text = f"{confirmation['team_name']} 온라인 회고 시간이 확정됐어요."
     attendee_ids = await get_slot_voters(confirmation["poll_id"], confirmation["slot"])
     blocks = build_confirmation_blocks(confirmation, attendee_ids=attendee_ids)
@@ -258,7 +265,14 @@ async def _apply_access_type(credentials, meet_url: str) -> tuple[str | None, st
 
 
 async def confirm_meeting_time(
-    client: AsyncWebClient, *, poll: dict, slot: str
+    client: AsyncWebClient, *, poll: dict, slot: str, announce: bool = True
+) -> tuple[dict, str]:
+    async with poll_lock(poll["id"]):
+        return await _confirm_meeting_time(client, poll=poll, slot=slot, announce=announce)
+
+
+async def _confirm_meeting_time(
+    client: AsyncWebClient, *, poll: dict, slot: str, announce: bool = True
 ) -> tuple[dict, str]:
     """시간을 확정하고 Calendar 이벤트·Meet 링크를 만들거나 갱신한다.
 
@@ -267,7 +281,6 @@ async def confirm_meeting_time(
     """
     starts_at, ends_at = slot_to_range(poll["meeting_date"], slot)
     credentials = _credentials()
-    attendees = await _meeting_attendees(client, poll["team_channel"])
 
     identity = {
         "meeting_date": poll["meeting_date"],
@@ -286,6 +299,7 @@ async def confirm_meeting_time(
         conference_request_id=(existing or {}).get("conference_request_id")
         or deterministic_request_id(**identity),
     )
+    attendees = await _meeting_attendees(client, poll["team_channel"])
 
     try:
         event = await ensure_meet_event(
@@ -306,7 +320,7 @@ async def confirm_meeting_time(
         )
     except (GoogleApiError, GoogleAuthError) as error:
         await mark_failed(confirmation_id=confirmation["id"], error=str(error))
-        logger.error(
+        logger.bind(alert=announce).error(
             "Google Meet 생성에 실패했습니다 - team_channel={} error={}",
             confirmation["team_channel"],
             error,
@@ -322,6 +336,7 @@ async def confirm_meeting_time(
         calendar_event_id=event.calendar_event_id,
         meet_url=event.meet_url,
         meet_access_type=access_type,
+        warning_text=warning or None,
     )
     logger.info(
         "온라인 회고 시간을 확정했습니다 - team_channel={} slot={} created={} invited={}",
@@ -332,13 +347,19 @@ async def confirm_meeting_time(
     )
 
     # DB 기록이 끝난 뒤에만 Slack에 올린다. 예전 투표는 팀 채널에 있다.
-    await post_confirmation_announcement(
-        client, confirmation, channel=poll.get("message_channel") or poll["team_channel"]
-    )
+    if announce:
+        await post_confirmation_announcement(
+            client, confirmation, channel=poll.get("message_channel") or poll["team_channel"]
+        )
     return confirmation, warning
 
 
 async def cancel_meeting(*, poll_id: int) -> dict | None:
+    async with poll_lock(poll_id):
+        return await _cancel_meeting(poll_id=poll_id)
+
+
+async def _cancel_meeting(*, poll_id: int) -> dict | None:
     """확정을 취소하고 Calendar 이벤트도 취소 상태로 바꾼다."""
     confirmation = await get_confirmation(poll_id)
     if confirmation is None:

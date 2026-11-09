@@ -348,9 +348,9 @@ class ConfirmMeetingTest(ConfirmationTestCase):
 
     async def test_changing_confirmed_time_updates_attendee_list(self):
         poll = await self.make_poll()
-        await confirm_meeting_time(self.slack, poll=poll, slot="20:00~21:00")
-        # 최초 확정 이후 들어온 응답도 변경된 시간에 맞춰 읽는다.
+        # 확정 전에 받은 응답을 관리자가 변경한 시간에 맞춰 다시 표시한다.
         await save_vote(poll_id=poll["id"], user_id="U22222222", slots=["21:00~22:00"])
+        await confirm_meeting_time(self.slack, poll=poll, slot="20:00~21:00")
 
         await confirm_meeting_time(self.slack, poll=poll, slot="21:00~22:00")
 
@@ -398,6 +398,7 @@ class ConfirmMeetingTest(ConfirmationTestCase):
         )
         meeting = meeting_from_confirmation(confirmation)
         self.assertEqual(meeting.notify_at, BUTTONS_OPEN)
+        self.slack.chat_update.reset_mock()
 
         with patch("slack.events.online_retro_confirmation.tz_now", return_value=BUTTONS_OPEN):
             await open_confirmation_buttons(self.slack, meeting)
@@ -406,9 +407,10 @@ class ConfirmMeetingTest(ConfirmationTestCase):
         self.slack.chat_update.assert_awaited_once()
         update = self.slack.chat_update.await_args.kwargs
         self.assertEqual(update["channel"], "C0ANNOUNCE")
-        self.assertEqual(update["ts"], "1700000000.0001")
-        self.assertEqual(update["blocks"][1]["type"], "actions")
-        self.assertIn("<@U11111111>", update["blocks"][0]["text"]["text"])
+        self.assertEqual(update["ts"], "1699999999.0001")
+        text = json.dumps(update["blocks"], ensure_ascii=False)
+        self.assertIn("open_online_retro_meeting", text)
+        self.assertIn("<@U11111111>", text)
 
     async def test_failed_button_update_is_not_retried_every_minute(self):
         poll = await self.make_poll()
@@ -561,14 +563,14 @@ class ConfirmMeetingTest(ConfirmationTestCase):
         await mark_poll_posted(poll["id"], "1700000000.0009", "C0ANNOUNCE")
         poll = await get_poll(poll["id"])
         await confirm_meeting_time(self.slack, poll=poll, slot="20:00~21:00")
-        message = self.slack.chat_postMessage.await_args.kwargs
+        message = self.slack.chat_update.await_args.kwargs
         self.assertEqual(message["channel"], "C0ANNOUNCE")
         self.assertIn("<#C11111111>에서 해요", message["blocks"][-1]["elements"][0]["text"])
 
         # 시간을 바꾸면 같은 채널의 확정 공지를 고친다.
         await confirm_meeting_time(self.slack, poll=poll, slot="21:00~22:00")
         self.assertEqual(self.slack.chat_update.await_args.kwargs["channel"], "C0ANNOUNCE")
-        self.slack.chat_postMessage.assert_awaited_once()
+        self.slack.chat_postMessage.assert_not_awaited()
 
     async def test_attendees_are_invited_when_configured(self):
         poll = await self.make_poll()

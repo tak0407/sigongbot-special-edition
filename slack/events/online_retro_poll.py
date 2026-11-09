@@ -17,9 +17,12 @@ from database.online_retro_poll import (
     get_poll,
     get_vote,
     mark_poll_posted,
+    mark_poll_message_clean,
     message_polls,
+    poll_is_closed,
     save_vote,
 )
+from slack.events.online_retro_lock import MESSAGE_LOCK, poll_lock
 
 # 일요일에만 모이므로 오후부터 고르게 한다. Slack 체크박스는 10개까지라
 # 1시간 단위로는 13시가 가장 이른 시작이다.
@@ -31,12 +34,15 @@ ALL_OPTIONS = TIME_SLOTS + [UNAVAILABLE]
 WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
 NO_TEAM = "팀 배정이 없어 투표할 수 없어요. 운영자에게 알려 주세요."
 NOT_ON_TEAM = "자신이 배정된 팀의 시간 투표에만 참여할 수 있어요."
+CLOSED_POLL = "이 조의 모임 시간은 이미 확정됐거나 확정 처리 중이에요. 변경이 필요하면 운영자에게 알려 주세요."
+BUSY_POLL = "이 조의 투표 또는 시간 확정을 처리 중이에요. 잠시 후 다시 확인해 주세요."
 DEFAULT_POLL_INTRO = (
     "*{날짜} 온라인 회고, 언제 모일까요?* 💻\n"
     f"팀별로 Google Meet에서 모여 {settings.ONLINE_RETRO_WRITING_MINUTES}분 동안 "
     "이번 주 회고를 쓰고, 돌아가며 나눠요.\n"
     "참여할 수 있는 시간을 모두 골라 주세요. "
-    "팀마다 가장 많이 고른 시간으로 정해서 이 채널에 알려 드릴게요."
+    "각 조의 모든 인원이 응답하면 1시간 뒤 가장 많이 고른 시간으로 확정해요. "
+    "동률이면 이른 시간으로 정해서 이 공지에 알려 드릴게요."
 )
 MAX_POLL_INTRO_LENGTH = 1000
 
@@ -96,8 +102,10 @@ def poll_actions(poll_id: int) -> dict:
     }
 
 
-def build_poll_blocks(polls: list[dict]) -> list[dict]:
-    """공지 하나에 묶인 팀 투표들. 시간은 팀마다 따로 정하므로 응답 현황만 보여 준다."""
+def build_poll_blocks(
+    polls: list[dict], *, now: datetime.datetime | None = None
+) -> list[dict]:
+    """공지에 묶인 조별 응답 현황·확정 예정 시각·확정 모임 안내를 함께 보여 준다."""
     first = polls[0]
     prefix = "*[테스트]* 🧪\n\n" if first["is_test"] else ""
 
@@ -109,15 +117,18 @@ def build_poll_blocks(polls: list[dict]) -> list[dict]:
             if size
             else f"{poll['team_name']} {poll['voters']}명"
         )
-    return [
+    all_confirmed = all(
+        (poll.get("confirmation") or {}).get("status") == "confirmed" for poll in polls
+    )
+    blocks = [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": prefix
-                + render_poll_intro(
+                + (f"*{meeting_day(first['meeting_date'])} 온라인 회고 모임 안내* 💻" if all_confirmed else render_poll_intro(
                     first.get("intro_template"), meeting_date=first["meeting_date"]
-                ),
+                )),
             },
         },
         {
@@ -127,17 +138,52 @@ def build_poll_blocks(polls: list[dict]) -> list[dict]:
                 "text": "*응답 현황*  " + " · ".join(progress(poll) for poll in polls),
             },
         },
-        poll_actions(first["id"]),
+    ]
+    if not all_confirmed:
+        blocks.extend([
+            poll_actions(first["id"]),
         {
             "type": "context",
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": "고른 시간은 자기 팀 투표로 기록돼요. 다시 고르면 이전 응답이 바뀝니다.",
+                    "text": "고른 시간은 자기 팀 투표로 기록돼요. 확정 전에는 다시 고르면 이전 응답이 바뀝니다.",
                 }
             ],
         },
-    ]
+        ])
+    # 확정 공지와 투표 UI는 서로 참조하므로 렌더링 시점에 가져온다.
+    from slack.events.online_retro_confirmation import build_confirmation_blocks
+
+    for poll in polls:
+        confirmation = poll.get("confirmation") or {}
+        if confirmation.get("status") == "confirmed":
+            blocks.extend(build_confirmation_blocks(
+                confirmation, attendee_ids=poll.get("attendee_ids"), now=now,
+            ))
+        elif confirmation.get("status") == "cancelled":
+            blocks.append({
+                "type": "section", "text": {"type": "mrkdwn",
+                "text": f"*{poll['team_name']}* · 모임 확정이 취소됐어요. 운영자가 일정을 다시 확인할 예정이에요."},
+            })
+        elif poll.get("auto_confirm_error"):
+            blocks.append({
+                "type": "section", "text": {"type": "mrkdwn",
+                "text": f"*{poll['team_name']}* · 자동 확정을 완료하지 못했어요. 운영자 확인이 필요해요."},
+            })
+        elif poll.get("all_voted_at"):
+            completed = datetime.datetime.fromisoformat(poll["all_voted_at"])
+            due = completed + datetime.timedelta(hours=1)
+            blocks.append({
+                "type": "section", "text": {"type": "mrkdwn",
+                "text": (
+                    f"*{poll['team_name']}* · 모든 조원이 투표를 마쳤어요. "
+                    "1시간 뒤 모임 시간이 확정됩니다.\n"
+                    f"확정 예정: <!date^{int(due.timestamp())}^{{date_short_pretty}} {{time}}"
+                    f"|{due.isoformat()}>"
+                )},
+            })
+    return blocks
 
 
 def build_poll_modal(poll: dict, previous: list[str]) -> dict:
@@ -194,18 +240,22 @@ async def _shared_polls(poll: dict) -> list[dict]:
             meeting_date=poll["meeting_date"], is_test=bool(poll["is_test"])
         )
         if item["slack_ts"] == poll["slack_ts"]
+        and _message_channel(item) == _message_channel(poll)
     ]
 
 
 async def _update_poll_message(client: AsyncWebClient, poll: dict) -> None:
     if not poll["slack_ts"]:
         return
-    await client.chat_update(
-        channel=_message_channel(poll),
-        ts=poll["slack_ts"],
-        text="온라인 회고 시간 투표",
-        blocks=build_poll_blocks(await _shared_polls(poll)),
-    )
+    async with MESSAGE_LOCK:
+        shown = await _shared_polls(poll)
+        await client.chat_update(
+            channel=_message_channel(poll),
+            ts=poll["slack_ts"],
+            text="온라인 회고 모임 안내 및 시간 투표",
+            blocks=build_poll_blocks(shown),
+        )
+        await mark_poll_message_clean(shown)
 
 
 async def post_time_poll(
@@ -275,7 +325,10 @@ async def _own_poll(anchor: dict, user_id: str) -> dict | None:
             team_channel=team_channel,
             is_test=bool(anchor["is_test"]),
         )
-        if poll and poll["slack_ts"] == anchor["slack_ts"]:
+        if (
+            poll and poll["slack_ts"] == anchor["slack_ts"]
+            and _message_channel(poll) == _message_channel(anchor)
+        ):
             return poll
     return anchor if anchor["is_test"] else None
 
@@ -306,6 +359,9 @@ async def handle_open_time_poll(
     if poll is None:
         await client.views_open(trigger_id=body["trigger_id"], view=build_notice_view(NO_TEAM))
         return
+    if await poll_is_closed(poll["id"]):
+        await client.views_open(trigger_id=body["trigger_id"], view=build_notice_view(CLOSED_POLL))
+        return
     previous = await get_vote(poll["id"], user_id)
     await client.views_open(
         trigger_id=body["trigger_id"], view=build_poll_modal(poll, previous)
@@ -325,7 +381,15 @@ async def handle_mark_unavailable(
     if poll is None:
         await client.views_open(trigger_id=body["trigger_id"], view=build_notice_view(NO_TEAM))
         return
-    await save_vote(poll_id=poll["id"], user_id=user_id, slots=[UNAVAILABLE])
+    lock = poll_lock(poll["id"])
+    if lock.locked():
+        await client.views_open(trigger_id=body["trigger_id"], view=build_notice_view(BUSY_POLL))
+        return
+    async with lock:
+        saved = await save_vote(poll_id=poll["id"], user_id=user_id, slots=[UNAVAILABLE])
+    if not saved:
+        await client.views_open(trigger_id=body["trigger_id"], view=build_notice_view(CLOSED_POLL))
+        return
     # trigger_id는 3초 안에만 쓸 수 있어 메시지를 고치기 전에 창부터 띄운다.
     await client.views_open(
         trigger_id=body["trigger_id"],
@@ -361,7 +425,15 @@ async def handle_time_poll_submit(
     user_id = body["user"]["id"]
     if not _can_vote(poll, user_id):
         raise ValueError(NOT_ON_TEAM)
-    await save_vote(poll_id=poll["id"], user_id=user_id, slots=slots)
+    lock = poll_lock(poll["id"])
+    if lock.locked():
+        await ack(response_action="update", view=build_notice_view(BUSY_POLL))
+        return
+    async with lock:
+        saved = await save_vote(poll_id=poll["id"], user_id=user_id, slots=slots)
+    if not saved:
+        await ack(response_action="update", view=build_notice_view(CLOSED_POLL))
+        return
     # 같은 창을 저장 결과 화면으로 바꾼다. 채널에는 아무것도 남기지 않는다.
     await ack(
         response_action="update",
