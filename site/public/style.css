@@ -86,3 +86,12 @@ footer{flex-direction:column;gap:14px}
 }
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}
 }
+
+.recruitment{font-size:14px;color:var(--muted);margin:24px 0 20px}
+.participation{margin:0}
+.participation>div{display:grid;grid-template-columns:180px 1fr;gap:32px;padding:24px 0;border-top:1px solid var(--line)}
+.participation dt{font-weight:600}
+.participation dd{margin:0;color:var(--muted)}
+.service-info{padding:30px 0;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+.service-info h2{font-size:18px;letter-spacing:-.5px;color:var(--ink)}
+@media(max-width:700px){.participation>div{grid-template-columns:1fr;gap:8px}.hero .note{padding:24px}.hero .note-answer{font-size:23px}}
